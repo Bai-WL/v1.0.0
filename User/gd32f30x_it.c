@@ -37,7 +37,7 @@ OF SUCH DAMAGE.
 #include "bsp_i2c_gd32f30x.h"
 #include "bsp_gd32f30x_rtc.h"
 #include "bsp_gd32f30x_rcu.h"
-#include "bsp_gd32f30x_hhctl_funkey.h"
+//#include "bsp_gd32f30x_hhctl_funkey.h"
 #include "bsp_atbm6431.h"
 
 /*!

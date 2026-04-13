@@ -47,20 +47,20 @@ void bsp_hhctl_init(void)
 	nvic_priority_group_set(NVIC_PRIGROUP_PRE4_SUB0);	/* 4-bits for pre-emption priority */
 
 	hid_init();
-    bsp_SysTickInit();
+	bsp_SysTickInit();
 	bsp_adc_init();
 
 	pm_power_on();
 	
 	// bsp_RTC_Init();
 	
-//	bsp_drdusb_init();
+	//bsp_drdusb_init();
 
 	bsp_JLXLcdInit();
 	bsp_JLXLcdClearScreen(0x00);
 	
 	rcu_periph_clock_enable(RCU_GPIOB); 
-    gpio_init(GPIOB, GPIO_MODE_OUT_PP, GPIO_OSPEED_10MHZ, GPIO_PIN_2);
+	gpio_init(GPIOB, GPIO_MODE_OUT_PP, GPIO_OSPEED_10MHZ, GPIO_PIN_2);
 	gpio_bit_reset(GPIOB, GPIO_PIN_2);
 	while (hid_get_funkey() != 2) {
 		vBat3V7 = bsp_readBat1Volt();

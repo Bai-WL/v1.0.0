@@ -15,7 +15,7 @@
         <TargetCommonOption>
           <Device>GD32F303CC</Device>
           <Vendor>GigaDevice</Vendor>
-          <PackID>GigaDevice.GD32F30x_DFP.2.2.3</PackID>
+          <PackID>GigaDevice.GD32F30x_DFP.2.3.0</PackID>
           <PackURL>https://gd32mcu.com/data/documents/pack/</PackURL>
           <Cpu>IROM(0x08000000,0x040000) IRAM(0x20000000,0x0C000) CPUTYPE("Cortex-M4") FPU2 CLOCK(12000000) ELITTLE</Cpu>
           <FlashUtilSpec></FlashUtilSpec>

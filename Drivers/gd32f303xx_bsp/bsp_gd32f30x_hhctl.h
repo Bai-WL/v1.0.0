@@ -15,8 +15,8 @@
 #include "bsp_gd32f303xx_systick.h"
 #include "bsp_gd32f303xx_knob.h"
 #include "bsp_gd32f303xx_modbus.h"
-#include "bsp_gd32f303xx_mtxkey_poll.h"
-#include "bsp_gd32f30x_hhctl_funkey.h"
+//#include "bsp_gd32f303xx_mtxkey_poll.h"
+//#include "bsp_gd32f30x_hhctl_funkey.h"
 #include "bsp_gd32f303xx_mbboard.h"
 #include "bsp_gd32f30x_rtc.h"
 
