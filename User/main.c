@@ -5,6 +5,8 @@
 #include "bsp_modbus_tcp.h"
 #include "bsp.h"
 #include "drv_pm.h"
+#include "bsp_gd32f30x_hhctl.h"
+#include "user_mb_controller.h"
 
 int main(void)
 {
@@ -17,15 +19,14 @@ int main(void)
 
     // 版本特定初始化
 #ifdef WIFI_H02W
-    bsp_modbus_tcp_window_init(); // WiFi版本初始化TCP窗口
-    printf("WiFi版本: 支持锂电池充电和TCP通信\r\n");
+
 #else
-    printf("有线版本: 外接电源供电\r\n");
+    // 有线版本初始化RS485 Modbus
 #endif
 
     // 使能全局中断
     __enable_irq();
-    printf("系统初始化完成\r\n");
+    // printf("系统初始化完成\r\n");  // 注释掉以节省内存
 
     // 主循环 - 时间片任务模式
     while (1)
@@ -51,7 +52,8 @@ int main(void)
         {
             last_100ms_tick = current_tick;
         }
-
+        // 有线通讯状态机
+        MBController_Process(&hMBMaster);
         // 电源管理状态机
         pm_handler();
 
