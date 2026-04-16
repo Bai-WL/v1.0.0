@@ -1,12 +1,13 @@
 // language_manager.c
 #include "language_resources.h"
+
 #include <string.h>
 
 // 当前语言设置
-Language current_language = LANG_EN;
+Language current_language = LANG_CN;
 
 // 中文资源
-static const char *cn_strings[] = {
+static const char* cn_strings[] = {
     // 主菜单
     [STR_MAIN_MENU] = "主菜单",
     [STR_MANUAL_INTERFACE] = "手动界面",
@@ -284,7 +285,7 @@ static const char *cn_strings[] = {
     [STR_CLOSE_PULL] = "闭盖插料中"};
 
 // 英文资源
-static const char *en_strings[] = {
+static const char* en_strings[] = {
     // 主菜单
     [STR_MAIN_MENU] = "Main Menu",
     [STR_MANUAL_INTERFACE] = "Manual Interface",
@@ -561,43 +562,31 @@ static const char *en_strings[] = {
     [STR_CLOSE_PULL] = "Insertion_Close"};
 
 // 设置当前语言
-void set_language(Language lang)
-{
-  current_language = lang;
+void set_language(Language lang) {
+    current_language = lang;
 }
 
 // 获取当前语言
-Language get_current_language(void)
-{
-  return current_language;
+Language get_current_language(void) {
+    return current_language;
 }
 
 // 获取字符串
-const char *get_string(StringID id)
-{
-  switch (current_language)
-  {
-  case LANG_EN:
-    if (en_strings[id])
-    {
-      return en_strings[id];
+const char* get_string(StringID id) {
+    switch (current_language) {
+    case LANG_EN:
+        if (en_strings[id]) {
+            return en_strings[id];
+        } else {
+            return "*";
+        }
+    case LANG_CN:
+        if (cn_strings[id]) {
+            return cn_strings[id];
+        } else {
+            return "*";
+        }
+    default:
+        return "*";
     }
-    else
-    {
-      return "*";
-    }
-    break;
-  case LANG_CN:
-    if (cn_strings[id])
-    {
-      return cn_strings[id];
-    }
-    else
-    {
-      return "*";
-    }
-    break;
-  default:
-    return "*";
-  }
 }

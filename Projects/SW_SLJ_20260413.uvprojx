@@ -310,7 +310,7 @@
           </ArmAdsMisc>
           <Cads>
             <interw>1</interw>
-            <Optim>2</Optim>
+            <Optim>1</Optim>
             <oTime>0</oTime>
             <SplitLS>0</SplitLS>
             <OneElfS>1</OneElfS>
@@ -659,6 +659,28 @@
         </Group>
         <Group>
           <GroupName>Application/rs485_rtu</GroupName>
+          <Files>
+            <File>
+              <FileName>device_storage.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\Rs485_rtu\device_storage.c</FilePath>
+            </File>
+            <File>
+              <FileName>poll_manager.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\Rs485_rtu\poll_manager.c</FilePath>
+            </File>
+            <File>
+              <FileName>user_mb_controller.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\Rs485_rtu\user_mb_controller.c</FilePath>
+            </File>
+            <File>
+              <FileName>user_poll.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\Rs485_rtu\user_poll.c</FilePath>
+            </File>
+          </Files>
         </Group>
         <Group>
           <GroupName>Application/rs485_tcp</GroupName>
@@ -672,6 +694,28 @@
         </Group>
         <Group>
           <GroupName>Application/display_menu</GroupName>
+          <Files>
+            <File>
+              <FileName>jlx_display_ext.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\Dispaly_menu\jlx_display_ext.c</FilePath>
+            </File>
+            <File>
+              <FileName>language_resources.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\Dispaly_menu\language_resources.c</FilePath>
+            </File>
+            <File>
+              <FileName>menu_example.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\Dispaly_menu\menu_example.c</FilePath>
+            </File>
+            <File>
+              <FileName>menu_system.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Application\Dispaly_menu\menu_system.c</FilePath>
+            </File>
+          </Files>
         </Group>
         <Group>
           <GroupName>Application/key_control</GroupName>

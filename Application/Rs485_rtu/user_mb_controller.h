@@ -1,4 +1,4 @@
-﻿#ifndef __USER_MB_CONTROLLER_H
+#ifndef __USER_MB_CONTROLLER_H
 #define __USER_MB_CONTROLLER_H
 
 #if defined(__CC_ARM)

@@ -19,4 +19,4 @@ typedef enum {
     SCREEN_ID_MAX
 } ScreenID;
 
-#endif // SCREEN_IDS_H
+#endif  // SCREEN_IDS_H
