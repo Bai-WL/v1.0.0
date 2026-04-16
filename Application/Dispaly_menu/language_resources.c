@@ -1,0 +1,603 @@
+// language_manager.c
+#include "language_resources.h"
+#include <string.h>
+
+// 当前语言设置
+Language current_language = LANG_EN;
+
+// 中文资源
+static const char *cn_strings[] = {
+    // 主菜单
+    [STR_MAIN_MENU] = "主菜单",
+    [STR_MANUAL_INTERFACE] = "手动界面",
+    [STR_USER_PARAMETERS] = "使用参数",
+    [STR_SYSTEM_PARAMETERS] = "系统参数",
+    [STR_IO_MONITOR] = "I/O监控",
+    [STR_ALARM_LOG] = "报警记录",
+    [STR_SCREEN_SETTING] = "屏幕设置",
+    [STR_AUTO_CONTROL] = "自动监控",
+
+    [STR_MANUAL_INTERFACE1] = "1.手动界面",
+    [STR_USER_PARAMETERS2] = "1.使用参数",
+    [STR_SYSTEM_PARAMETERS3] = "2.系统参数",
+    [STR_IO_MONITOR4] = "3.I/O监控",
+    [STR_ALARM_LOG5] = "4.报警记录",
+    [STR_SCREEN_SETTING6] = "5.屏幕设置",
+
+    // 通用
+    [STR_MANUAL] = "手动",
+    [STR_MANUAL_FAST] = "手动-快",
+    [STR_MANUAL_SLOW] = "手动-慢",
+    [STR_STANDBY] = "预运行",
+    [STR_AUTO] = "自动",
+    [STR_LUNGUAGE] = "语言",
+    [STR_CN] = "中文",
+    [STR_EN] = "英文",
+    [STR_YES] = "是",
+    [STR_NO] = "否",
+    [STR_CLOSE] = "闭",
+    [STR_OPEN] = "开",
+    [STR_DAO] = "走刀",
+    [STR_XIN] = "走心",
+    [STR_CNC] = "CNC",
+    [STR_CAM] = "CAM",
+    [STR_MM] = "mm",
+    [STR_INCH] = "inch",
+    [STR_UNCLOCKED] = "未锁定",
+    [STR_LOCKED] = "锁定",
+    [STR_KONG] = "○",
+    [STR_SHI] = "●",
+    [STR_FWD] = "正转",
+    [STR_FWDING] = "正转中",
+    [STR_REV] = "反转",
+    [STR_REVING] = "反转中",
+    [STR_COVER_OPENING] = "开盖中",
+    [STR_COVER_CLOSING] = "闭盖中",
+    [STR_BASE_UNLOCKED] = "原点未锁定",
+    [STR_BASE_LOCKED] = "原点已锁定",
+    [STR_NONE] = "无",
+    [STR_STRING_NONE] = "",
+    // 监控界面
+    [STR_FORCE] = "推力",
+    [STR_SPEED] = "速度",
+    [STR_PROCESS_COUNT] = "加工数量",
+    [STR_POSITION] = "位置",
+    [STR_CLIP] = "夹开",
+
+    // 手动界面
+    [STR_MOVE_LEFT_QUICKLY] = "快速左移",
+    [STR_MOVE_RIGHT_QUICKLY] = "快速右移",
+    [STR_MOVE_LEFT] = "左移",
+    [STR_MOVE_RIGHT] = "右移",
+    [STR_COVER_CLOSE] = "闭盖",
+    [STR_COVER_OPEN] = "开盖",
+
+    // 报警信息
+    [STR_ALARM_E01] = "急停被按下",
+    [STR_ALARM_E02] = "外盖未关上",
+    [STR_ALARM_E03] = "伺服异常",
+    [STR_ALARM_E04] = "插料失败",
+    [STR_ALARM_E05] = "拔料失败",
+    [STR_ALARM_E06] = "残材未拉回",
+    [STR_ALARM_E07] = "架上无料",
+    [STR_ALARM_E08] = "车床异常",
+    [STR_ALARM_E09] = "切端未打上",
+    [STR_ALARM_E10] = "夹头未开",
+    [STR_ALARM_E11] = "料机未在自动模式",
+    [STR_ALARM_E12] = "夹头开时棒材送出过长",
+    [STR_ALARM_E13] = "夹头开时棒材送出过短",
+    [STR_ALARM_E14] = "闭盖失败",
+    [STR_ALARM_E15] = "开盖失败",
+    [STR_ALARM_E16] = "残材未掉落",
+    [STR_ALARM_E17] = "无法推料",
+    [STR_ALARM_E18] = "伺服回退超时",
+    [STR_ALARM_E19] = "送入车床失败",
+    [STR_ALARM_E20] = "无法启动车床",
+    [STR_ALARM_E21] = "夹头闭时棒材前冲",
+    [STR_ALARM_E22] = "夹头闭时棒材送出过短",
+    [STR_ALARM_E23] = "夹头开时棒材前冲",
+    [STR_ALARM_E24] = "夹头闭时棒材送出过长",
+    [STR_ALARM_E25] = "切端长度设定太小",
+    [STR_ALARM_E26] = "插拔料位移失败",
+    [STR_ALARM_E27] = "切端/挡块位置错误",
+    [STR_ALARM_E28] = "油泵变频器故障",
+    [STR_ALARM_E29] = "干车削异常",
+    [STR_ALARM_E30] = "料机处于干车削模式",
+    [STR_ALARM_E31] = "夹头开时棒材向后拉",
+    [STR_ALARM_E32] = "切屑中料盖未闭合",
+    [STR_ALARM_E35] = "油泵电机过载",
+    [STR_ALARM_E36] = "下料异常",
+    [STR_ALARM_E37] = "485通讯异常",
+    [STR_ALARM_E255] = "PLC报错或未运行",
+
+    // 通讯错误
+    [STR_NO_COMM] = "PLC通讯异常",
+    [STR_COMM_TIMEOUT] = "通讯超时",
+    [STR_COMM_ERROR] = "通讯码错误",
+    [STR_FUNCTION_CODE_ERR] = "功能码错误",
+    [STR_ADDRESS_NOT_EXIST] = "数据地址不存在",
+    [STR_DATA_LENGTH_ERR] = "数据长度不足或超长",
+    [STR_SLAVE_DEVICE_FAIL] = "从站设备故障",
+    [STR_RESPONSE_ERROR] = "请求响应错误",
+    [STR_PASSWORD_FAIL] = "密码验证失败",
+    [STR_CRC_ERROR] = "CRC校验错误",
+    [STR_FUNCTION_DONT_SUPPORT] = "该功能无法执行",
+    [STR_REQUEST_LENGTH_ERR] = "请求长度错误",
+    [STR_INTERNAL_ERROR] = "从站内部故障",
+    [STR_FUNCTION_NOT_SUPPORT] = "不支持该功能码",
+    [STR_UNKNOWN_ERROR] = "未知错误",
+
+    // 参数菜单相关
+    [STR_SETTING_P00] = "P00 工件长度设定",
+    [STR_SETTING_P01] = "P01 夹开推力设定",
+    [STR_SETTING_P02] = "P02 夹开速度设定",
+    [STR_SETTING_P03] = "P03 夹闭推力设定",
+    [STR_SETTING_P04] = "P04 夹闭速度设定",
+    [STR_SETTING_P05] = "P05 减速距离设定",
+    [STR_SETTING_P06] = "P06 材欠位置设定",
+    [STR_SETTING_P07] = "P07 切端位置设定",
+    [STR_SETTING_P071] = "P7-1 切端参考位置",
+    [STR_SETTING_P08] = "P08 切端参考位置",
+    [STR_SETTING_P09] = "P09 油泵解除位置",
+    [STR_SETTING_P10] = "P10 移动防震解除",
+    [STR_SETTING_P11] = "P11 过短距离设定",
+    [STR_SETTING_P12] = "P12 过长距离-闭",
+    [STR_SETTING_P13] = "P13 过长距离-开",
+    [STR_SETTING_P14] = "P14 一次送料位置",
+    [STR_SETTING_P15] = "P15 插拔料位置",
+    [STR_SETTING_P16] = "P16 插料推力",
+    [STR_SETTING_P17] = "P17 拔料推力",
+
+    // 系统参数菜单
+    [STR_M01] = "M01 模拟模式",
+    [STR_M02] = "M02 A1-刀头信号",
+    [STR_M03] = "M03 A2-车床异常",
+    [STR_M04] = "M04 A3-后退许可",
+    [STR_M05] = "M05 A4-暂停出力",
+    [STR_M06] = "M06 自动换料",
+    [STR_M07] = "M07 切端(定位)",
+    [STR_M08] = "M08 残材前方顶出",
+    [STR_M09] = "M09 CNC类型",
+    [STR_M10] = "M10 料机安全",
+    [STR_M11] = "M11 料机安全",
+    [STR_M12] = "M12 材欠夹开无推力",
+    [STR_M13] = "M12 同步装置",
+    [STR_M131] = "M13-1 同步速度mm/p",
+    [STR_M14] = "M14 Y06为机架",
+    [STR_M15] = "M15 Y05为周期启动",
+    [STR_M151] = "M15-1 启动时间",
+    [STR_M16] = "M16 Y05为工作中",
+    [STR_M17] = "M17 Y10寸动/架上无料",
+    [STR_M18] = "M18 主轴防震不随A1动",
+    [STR_M19] = "M19 自动换料",
+    [STR_M20] = "M20 防震用于工作中",
+    [STR_M21] = "M21 车床类型",
+    [STR_M24] = "M24 防震用于押棒",
+    [STR_M25] = "M25 防震用于押棒",
+    [STR_M26] = "M26 执行插拔后检查",
+    [STR_M27] = "M27 快速逆转",
+    [STR_M28] = "M28 材欠A4不自保",
+    [STR_M31] = "M31 换完新料后第几次夹开后开始加工 (1-5)",
+    [STR_M32] = "M32 界面测试模式",
+    [STR_M33] = "M33 数值单位",
+    [STR_M34] = "M34 过长上限解除",
+    [STR_M35] = "M35 原点设定",
+    [STR_M36] = "程序版本",
+
+    // I/O监控
+    [STR_X0] = "X0",
+    [STR_X1] = "X1",
+    [STR_X2] = "X2",
+    [STR_X3] = "X3",
+    [STR_X4] = "X4",
+    [STR_X5] = "X5",
+    [STR_X6] = "X6",
+    [STR_X7] = "X7",
+    [STR_X8] = "X8",
+    [STR_X9] = "X9",
+    [STR_X10] = "X10",
+    [STR_X11] = "X11",
+    [STR_X12] = "X12",
+    [STR_X13] = "X13",
+    [STR_X14] = "X14",
+    [STR_X15] = "X15",
+    [STR_X16] = "X16",
+    [STR_Y0] = "Y0",
+    [STR_Y1] = "Y1",
+    [STR_Y2] = "Y2",
+    [STR_Y3] = "Y3",
+    [STR_Y4] = "Y4",
+    [STR_Y5] = "Y5",
+    [STR_Y6] = "Y6",
+    [STR_Y7] = "Y7",
+    [STR_Y8] = "Y8",
+    [STR_Y9] = "Y9",
+    [STR_Y10] = "Y10",
+    [STR_Y11] = "Y11",
+    [STR_Y12] = "Y12",
+    [STR_Y13] = "Y13",
+    [STR_Y14] = "Y14",
+    [STR_Y15] = "Y15",
+    [STR_Y16] = "Y16",
+    [STR_Y17] = "Y17",
+
+    // 其他界面字符串
+    [STR_LOGIN] = "登录",
+    [STR_OPEN_COVER] = "开盖",
+    [STR_CLOSE_COVER] = "关盖",
+    [STR_FWD_ROTATION] = "正转",
+    [STR_REV_ROTATION] = "反转",
+    // 单位
+    [STR_PERCENT] = "%",
+    [STR_PIECES] = "件",
+    [STR_MM_PER_SEC] = "mm/s",
+    // 屏设置界面
+    [STR_HOUR] = "时",
+    [STR_MINUTE] = "分",
+    [STR_SECOND] = "秒",
+    // 密码登入界面
+    [STR_PASSWARD] = "密码",
+    [STR_NOTES1] = "请勿随意更改系统设定参数",
+    // 原点设置界面
+    [STR_ORI_SETTING] = "原点",
+    [STR_NOTES2] = "请勿随意锁定原点位置",
+    [STR_NOTES3] = "锁定时请确保押棒已退回极限",
+
+    // 状态信息
+    [STR_CONNECTING] = "连接中...",
+    [STR_CONNECTED] = "已连接",
+    [STR_DISCONNECTED] = "未连接",
+    [STR_CHARGING] = "充电中",
+    [STR_BATTERY] = "电池",
+    // 自动控制
+    [STR_MOVE_FORWARD] = "前进中",
+    [STR_MOVE_BACKWARD] = "后退中",
+    [STR_OPENING_COVER] = "料盖开启中",
+    [STR_CLOSEING_COVER] = "料盖闭合中",
+
+    // 菜单
+    [STR_MENU_MODIFY] = "设置修改中",
+    [STR_FAST] = "快速",
+    [STR_SLOW] = "慢速",
+    //
+    [STR_BAR_POS] = "推杆位置:",
+    [STR_COVER_ERR] = "料盖异常",
+    [STR_COVER_OPENED] = "料盖开启",
+    [STR_COVER_CLOSED] = "料盖闭合",
+    [CHUCK_OPENED] = "夹头松开",
+    [CHUCK_CLOSED] = "夹头夹紧",
+    [HOMEING] = "回原点中",
+    [HOME_COMPLETE] = "回原点完成",
+    /*自动模式 */
+    [STR_CURSTATUS] = "当前状态:",
+    [STR_CURACTION] = "当前动作:",
+    [STR_REMAIN] = "剩余件数:",
+    [STR_RUNING] = "运行中",
+    /*动作*/
+    [STR_ACTION_PRERUN] = "等待操作中",
+    [STR_ACTION_CUTTING] = "切端步骤中",
+    [STR_ACTION_FEEDING] = "送料中",
+    [STR_ACTION_PULLBACK] = "残材拉回中",
+    [STR_ACTION_PULL] = "拔料中",
+    [STR_OPEN_UPDATA] = "开盖上料中",
+    [STR_FEEDING] = "一次送料中",
+    [STR_CLOSE_PULL] = "闭盖插料中"};
+
+// 英文资源
+static const char *en_strings[] = {
+    // 主菜单
+    [STR_MAIN_MENU] = "Main Menu",
+    [STR_MANUAL_INTERFACE] = "Manual Interface",
+    [STR_USER_PARAMETERS] = "User Parameters",
+    [STR_SYSTEM_PARAMETERS] = "System Parameters",
+    [STR_IO_MONITOR] = "I/O Monitor",
+    [STR_ALARM_LOG] = "Alarm Log",
+    [STR_SCREEN_SETTING] = "Screen Setting",
+    [STR_AUTO_CONTROL] = "Auto Control",
+
+    [STR_MANUAL_INTERFACE1] = "1. Manual Interface",
+    [STR_USER_PARAMETERS2] = "2. User Parameters",
+    [STR_SYSTEM_PARAMETERS3] = "3. System Parameters",
+    [STR_IO_MONITOR4] = "4. I/O Monitor",
+    [STR_ALARM_LOG5] = "5. Alarm Log",
+    [STR_SCREEN_SETTING6] = "6. Screen Setting",
+
+    // 通用
+    [STR_MANUAL] = "Manual",
+    [STR_MANUAL_FAST] = "Manual",
+    [STR_MANUAL_SLOW] = "Manual",
+    [STR_STANDBY] = "PreRun",
+    [STR_AUTO] = "Auto",
+    [STR_LUNGUAGE] = "language",
+    [STR_CN] = "CN",
+    [STR_EN] = "EN",
+    [STR_YES] = "Yes",
+    [STR_NO] = "No",
+    [STR_CLOSE] = "Close",
+    [STR_OPEN] = "Open",
+    [STR_DAO] = "Fix",
+    [STR_XIN] = "Swiss",
+    [STR_CNC] = "CNC",
+    [STR_CAM] = "CAM",
+    [STR_MM] = "mm",
+    [STR_INCH] = "inch",
+    [STR_UNCLOCKED] = "Unlocked",
+    [STR_LOCKED] = "Locked",
+    [STR_KONG] = "○",
+    [STR_SHI] = "●",
+    [STR_FWD] = "FWD Rotation",
+    [STR_FWDING] = "FWD Rotating",
+    [STR_REVING] = "REV Rotating",
+    [STR_COVER_OPENING] = "Opening Lid",
+    [STR_COVER_CLOSING] = "Closing Lid",
+    [STR_BASE_UNLOCKED] = "Origin Unlocked",
+    [STR_BASE_LOCKED] = "Origin Locked",
+    [STR_NONE] = "None",
+    [STR_STRING_NONE] = "",
+    // 监控界面
+
+    [STR_FORCE] = "Thrust",
+    [STR_SPEED] = "Speed",
+    [STR_PROCESS_COUNT] = "Process Count",
+    [STR_POSITION] = "Position",
+    [STR_CLIP] = "Clip Open",
+
+    // 手动界面
+    [STR_MOVE_LEFT_QUICKLY] = "Quick Move Left",
+    [STR_MOVE_RIGHT_QUICKLY] = "Quick Move Right",
+    [STR_MOVE_LEFT] = "Move Left",
+    [STR_MOVE_RIGHT] = "Move Right",
+    [STR_COVER_CLOSE] = "Close Lid",
+    [STR_COVER_OPEN] = "Open Lid",
+
+    // 报警信息
+    [STR_ALARM_E01] = "Main Circuit Open",
+    [STR_ALARM_E02] = "Lid Not Closed",
+    [STR_ALARM_E03] = "Servo Fault",
+    [STR_ALARM_E04] = "Insert Failure",
+    [STR_ALARM_E05] = "Transfer Failure",
+    [STR_ALARM_E06] = "Retracted Failure",
+    [STR_ALARM_E07] = "Rack Empty",
+    [STR_ALARM_E08] = "Lathe Fault",
+    [STR_ALARM_E09] = "Cut_end Not Mark",
+    [STR_ALARM_E10] = "Chuck Not Open",
+    [STR_ALARM_E11] = "Not In Auto Mode",
+    [STR_ALARM_E12] = "Overfeed-Open",
+    [STR_ALARM_E13] = "Underfeed-Open",
+    [STR_ALARM_E14] = "Close Lid Failure",
+    [STR_ALARM_E15] = "Open Lid Failure",
+    [STR_ALARM_E16] = "Eject Failure",
+    [STR_ALARM_E17] = "Push Failure",
+    [STR_ALARM_E18] = "Bar Reverse Timeout",
+    [STR_ALARM_E19] = "Feed To Lathe Fail",
+    [STR_ALARM_E20] = "Cannot Start Lathe",
+    [STR_ALARM_E21] = "Feed Advanced-Closed",
+    [STR_ALARM_E22] = "Underfeed-Closed",
+    [STR_ALARM_E23] = "Feed Advanced-Open",
+    [STR_ALARM_E24] = "Overfeed-Closed",
+    [STR_ALARM_E25] = "P5 Cut Length Short",
+    [STR_ALARM_E26] = "Insert/Extract Fail",
+    [STR_ALARM_E27] = "P5 or Stop Pos Error",
+    [STR_ALARM_E29] = "Dry Run Fault",
+    [STR_ALARM_E30] = "In Dry Run Mode",
+    [STR_ALARM_E31] = "Bar feed Retracted",
+    [STR_ALARM_E32] = "Lid Open-Cutting",
+    [STR_ALARM_E35] = "Oil Pump Overload",
+    [STR_ALARM_E36] = "Unloading Fault",
+    [STR_ALARM_E37] = "485 Comm Fault",
+    [STR_ALARM_E255] = "PLC ERR or Not Run",
+
+    // 其他通用字符串
+    [STR_NO_COMM] = "Modbus Device Offline",
+    [STR_COMM_TIMEOUT] = "Comm Timeout",
+    [STR_COMM_ERROR] = "Comm Code Error",
+    [STR_FUNCTION_CODE_ERR] = "Function Code Err",
+    [STR_ADDRESS_NOT_EXIST] = "Address Invalid",
+    [STR_DATA_LENGTH_ERR] = "Data Length Error",
+    [STR_SLAVE_DEVICE_FAIL] = "Slave Device err",
+    [STR_RESPONSE_ERROR] = "Response Error",
+    [STR_PASSWORD_FAIL] = " Password Fail",
+    [STR_CRC_ERROR] = "CRC Error",
+    [STR_FUNCTION_DONT_SUPPORT] = "Not Supported",
+    [STR_REQUEST_LENGTH_ERR] = "Request Length Err",
+    [STR_INTERNAL_ERROR] = "Slave Internal Err",
+    [STR_FUNCTION_NOT_SUPPORT] = "Function Not Support",
+    [STR_UNKNOWN_ERROR] = "Unknown Error",
+
+    // 参数菜单相关
+    [STR_SETTING_P00] = "P00 Workpiece length setting",
+    [STR_SETTING_P01] = "P01 Clamp open thrust setting",
+    [STR_SETTING_P02] = "P02 Clamp open speed setting",
+    [STR_SETTING_P03] = "P03 Clamp close thrust setting",
+    [STR_SETTING_P04] = "P04 Clamp close speed setting",
+    [STR_SETTING_P05] = "P05 Deceleration distance setting",
+    [STR_SETTING_P06] = "P06 Material shortage position setting",
+    [STR_SETTING_P07] = "P07 Cut end position setting",
+    [STR_SETTING_P071] = "P7-1 Cut end reference position",
+    [STR_SETTING_P08] = "P08 Cut end reference position",
+    [STR_SETTING_P09] = "P09 Oil pump release position",
+    [STR_SETTING_P10] = "P10 Move anti-vibration release",
+    [STR_SETTING_P11] = "P11 Short distance setting",
+    [STR_SETTING_P12] = "P12 Long distance - close",
+    [STR_SETTING_P13] = "P13 Long distance - open",
+    [STR_SETTING_P14] = "P14 First feeding position",
+    [STR_SETTING_P15] = "P15 Insert/extract position",
+    [STR_SETTING_P16] = "P16 Insert thrust",
+    [STR_SETTING_P17] = "P17 Extract thrust",
+
+    // 系统参数菜单
+    [STR_M01] = "M01 Simulation mode",
+    [STR_M02] = "M02 A1-Tool head signal",
+    [STR_M03] = "M03 A2-Slide abnormal",
+    [STR_M04] = "M04 A3-Retract permit",
+    [STR_M05] = "M05 A4-Output pause",
+    [STR_M06] = "M06 Auto material change",
+    [STR_M07] = "M07 Cut end (positioning)",
+    [STR_M08] = "M08 Chip forward ejection",
+    [STR_M09] = "M09 CNC type",
+    [STR_M10] = "M10 Machine safety",
+    [STR_M11] = "M11 Machine safety",
+    [STR_M12] = "M12 Material shortage clamp open no thrust",
+    [STR_M13] = "M12 Sync device",
+    [STR_M131] = "M13-1 Sync speed mm/p",
+    [STR_M14] = "M14 Y06 as bracket",
+    [STR_M15] = "M15 Y05 as cycle start",
+    [STR_M151] = "M15-1 Start time",
+    [STR_M16] = "M16 Y05 as working",
+    [STR_M17] = "M17 Y10 jog/no material on rack",
+    [STR_M18] = "M18 Spindle anti-vibration not following A1",
+    [STR_M19] = "M19 Auto material change",
+    [STR_M20] = "M20 Anti-vibration for working",
+    [STR_M21] = "M21 Lathe type",
+    [STR_M24] = "M24 Anti-vibration for pressing",
+    [STR_M25] = "M25 Anti-vibration for pressing",
+    [STR_M26] = "M26 Insert/extract post-check",
+    [STR_M27] = "M27 Fast reverse",
+    [STR_M28] = "M28 Material shortage A4 no self-hold",
+    [STR_M31] = "M31 After material change, which clamp open to start process (1-5)",
+    [STR_M32] = "M32 Interface test mode",
+    [STR_M33] = "M33 Value unit",
+    [STR_M34] = "M34 Long limit release",
+    [STR_M35] = "M35 Origin setting",
+    [STR_M36] = "Program version",
+
+    // I/O监控
+    [STR_X0] = "X0",
+    [STR_X1] = "X1",
+    [STR_X2] = "X2",
+    [STR_X3] = "X3",
+    [STR_X4] = "X4",
+    [STR_X5] = "X5",
+    [STR_X6] = "X6",
+    [STR_X7] = "X7",
+    [STR_X8] = "X8",
+    [STR_X9] = "X9",
+    [STR_X10] = "X10",
+    [STR_X11] = "X11",
+    [STR_X12] = "X12",
+    [STR_X13] = "X13",
+    [STR_X14] = "X14",
+    [STR_X15] = "X15",
+    [STR_X16] = "X16",
+    [STR_Y0] = "Y0",
+    [STR_Y1] = "Y1",
+    [STR_Y2] = "Y2",
+    [STR_Y3] = "Y3",
+    [STR_Y4] = "Y4",
+    [STR_Y5] = "Y5",
+    [STR_Y6] = "Y6",
+    [STR_Y7] = "Y7",
+    [STR_Y8] = "Y8",
+    [STR_Y9] = "Y9",
+    [STR_Y10] = "Y10",
+    [STR_Y11] = "Y11",
+    [STR_Y12] = "Y12",
+    [STR_Y13] = "Y13",
+    [STR_Y14] = "Y14",
+    [STR_Y15] = "Y15",
+    [STR_Y16] = "Y16",
+    [STR_Y17] = "Y17",
+
+    // 其他界面字符串
+    [STR_LOGIN] = "Login",
+    [STR_OPEN_COVER] = "Open Lid",
+    [STR_CLOSE_COVER] = "Close Lid",
+    [STR_FWD_ROTATION] = "FWD Rotation",
+    [STR_REV_ROTATION] = "REV Rotation",
+    // 单位
+    [STR_PERCENT] = "%",
+    [STR_PIECES] = "Pcs",
+    [STR_MM_PER_SEC] = "mm/s",
+    // 屏设置界面
+    [STR_HOUR] = "Hour",
+    [STR_MINUTE] = "Minute",
+    [STR_SECOND] = "Second",
+    // 密码登入界面
+    [STR_PASSWARD] = "Password",
+    [STR_NOTES1] = "Do not change system settings arbitrarily",
+    // 原点设置界面
+    [STR_ORI_SETTING] = "origin",
+    [STR_NOTES2] = "Do not lock origin position arbitrarily",
+    [STR_NOTES3] = "Ensure press rod has retracted to limit when locking",
+
+    // 状态信息
+    [STR_CONNECTING] = "Connecting...",
+    [STR_CONNECTED] = "Connected",
+    [STR_DISCONNECTED] = "Disconnected",
+    [STR_CHARGING] = "Charging",
+    [STR_BATTERY] = "Battery",
+    // 自动控制
+    [STR_MOVE_FORWARD] = "Advancing",
+    [STR_MOVE_BACKWARD] = "Reversing",
+    [STR_OPENING_COVER] = "Lid Opening",
+    [STR_CLOSEING_COVER] = "Lid Closing",
+
+    // 菜单
+    [STR_MENU_MODIFY] = "Menu Edit",
+    [STR_FAST] = "FAST",
+    [STR_SLOW] = "SLOW",
+    //
+    [STR_BAR_POS] = "Position:",
+    [STR_COVER_ERR] = "Cover_ERR",
+    [STR_COVER_OPENED] = "Lid_OP",
+    [STR_COVER_CLOSED] = "Lid_CL",
+    [CHUCK_OPENED] = "Chuck_OP",
+    [CHUCK_CLOSED] = "Chuck_CL",
+    [HOMEING] = "Homing",
+    [HOME_COMPLETE] = "Homing Completed",
+    /*自动模式 */
+    [STR_CURSTATUS] = "Status:",
+    [STR_CURACTION] = "Action:",
+    [STR_REMAIN] = "Remain:",
+    [STR_RUNING] = "Running",
+    /*动作*/
+    [STR_ACTION_PRERUN] = "Waiting Operator",
+    [STR_ACTION_CUTTING] = "Cutting Progress",
+    [STR_ACTION_FEEDING] = "Feeding",
+    [STR_ACTION_PULLBACK] = "Remnant Retract",
+    [STR_ACTION_PULL] = "Ejecting",
+    [STR_OPEN_UPDATA] = "Loading_Open",
+    [STR_FEEDING] = "Single Feeding",
+    [STR_CLOSE_PULL] = "Insertion_Close"};
+
+// 设置当前语言
+void set_language(Language lang)
+{
+  current_language = lang;
+}
+
+// 获取当前语言
+Language get_current_language(void)
+{
+  return current_language;
+}
+
+// 获取字符串
+const char *get_string(StringID id)
+{
+  switch (current_language)
+  {
+  case LANG_EN:
+    if (en_strings[id])
+    {
+      return en_strings[id];
+    }
+    else
+    {
+      return "*";
+    }
+    break;
+  case LANG_CN:
+    if (cn_strings[id])
+    {
+      return cn_strings[id];
+    }
+    else
+    {
+      return "*";
+    }
+    break;
+  default:
+    return "*";
+  }
+}
