@@ -19,6 +19,7 @@
 #include "bsp_gd32f303xx_jlx192128g.h"
 #include "bsp_gd32f303xx_systick.h"
 #include "bsp_font.h"
+#include "jlx_display_ext.h"
 
 #define LCD_SPI_INTERFACE SPI0
 
@@ -174,6 +175,7 @@ void bsp_JLXLcdInit(void)
     vLcdSetCursor(0, 0, 192, 16); /* 进行一次窗口配置 */
     bsp_JLXLcdClearScreen(0x00);
     bsp_JLXLcdRefreshScreen();
+    JLX_DisplayExt_Init(frame_buffer);
 #endif
 }
 
