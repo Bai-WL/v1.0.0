@@ -421,8 +421,8 @@ static void render_header_internal(void) {
     if (current_menu != NULL) {
         const char* title = get_string(current_menu->text_id);
         if (title != NULL) {
-            bsp_JLXLcdShowString_Any_row(2, 2, title, default_layout.font_size,0);
-						bsp_JLXLcdRefreshScreen();  // 刷新屏幕显示
+            bsp_JLXLcdShowString_Any_row(2, 2, title, default_layout.font_size, 0);
+            bsp_JLXLcdRefreshScreen();  // 刷新屏幕显示
         }
     }
 
@@ -447,7 +447,7 @@ static void render_footer_internal(void) {
         }
     }
 
-    // 绘制操作提示
+        // 绘制操作提示
     if (menu_ctx.is_editing) {
         bsp_JLXLcdShowString_Any_row(2, y_pos + 4, "上/下:调整 左/右:快速调整", default_layout.font_size, 1);
         bsp_JLXLcdShowString_Any_row(JLXLCD_W - 64, y_pos + 4, "确认:√ 取消:X", default_layout.font_size, 1);
