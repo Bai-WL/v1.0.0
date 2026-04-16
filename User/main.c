@@ -16,7 +16,7 @@ int main(void) {
 
     // 硬件初始化
     bsp_hhctl_init();
-
+    test_menu_navigation();  // 测试菜单导航功能
     // 版本特定初始化
 #ifdef WIFI_H02W
 
@@ -47,7 +47,7 @@ int main(void) {
         // 100ms
         if (current_tick - last_100ms_tick >= 100) {
             last_100ms_tick = current_tick;
-            test_menu_navigation();     // 测试菜单导航功能
+            menu_handle_timer(last_100ms_tick);
             bsp_JLXLcdRefreshScreen();  // 刷新屏幕显示
         }
         // 有线通讯状态机

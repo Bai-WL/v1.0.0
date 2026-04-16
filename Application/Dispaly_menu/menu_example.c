@@ -121,6 +121,7 @@ static const MenuItem menu_items[] = {
 void test_menu_navigation(void) {
     // 初始化菜单系统
     menu_system_init();
+    menu_load_config(menu_items, MENU_ITEM_COUNT);
     // 启动菜单系统
     menu_start(0);  // 从主菜单开始
 }

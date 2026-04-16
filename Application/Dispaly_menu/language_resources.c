@@ -580,14 +580,12 @@ const char* get_string(StringID id) {
         } else {
             return "*";
         }
-        break;
     case LANG_CN:
         if (cn_strings[id]) {
             return cn_strings[id];
         } else {
             return "*";
         }
-        break;
     default:
         return "*";
     }

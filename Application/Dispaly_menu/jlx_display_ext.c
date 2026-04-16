@@ -14,8 +14,8 @@
 #include "texture.h"
 
 // 外部声明字体数据
-// extern const FONT_CHN13X16_t Chinese_text_13x16[];
-// extern const char english_text_7x16[];
+extern const FONT_CHN13X16_t Chinese_text_13x16[];
+extern const char english_text_7x16[];
 
 // 帧缓冲区指针
 static char* g_frame_buffer = NULL;
@@ -112,11 +112,11 @@ static uint32_t chn_hash_func(uint32_t key) {
 static uint32_t find_chn_index_13x16(uint16_t chn_code) {
     uint32_t hash = chn_hash_func(chn_code);
     // 简化查找：遍历所有汉字（实际项目中应使用哈希表优化）
-    uint16_t chn_count = sizeof(Chinese_text_13x16) / sizeof(FONT_CHN13X16_t);
+    uint16_t chn_count = sizeof(Chinese_texts_13x16) / sizeof(FONT_CHN13X16_t);
     uint16_t i;
 
     for (i = 0; i < chn_count; i++) {
-        if (*((uint16_t*)Chinese_text_13x16[i]._ucIndex) == chn_code) return i;
+        if (*((uint16_t*)Chinese_texts_13x16[i]._ucIndex) == chn_code) return i;
     }
 
     return 0xFFFF;  // 未找到
@@ -127,7 +127,7 @@ static uint32_t find_chn_index_13x16(uint16_t chn_code) {
  */
 static void show_chn_char_13x16(uint16_t x, uint16_t y, uint16_t chn_code, uint8_t mode) {
     uint32_t index = find_chn_index_13x16(chn_code);
-    uint16_t chn_count = sizeof(Chinese_text_13x16) / sizeof(FONT_CHN13X16_t);
+    uint16_t chn_count = sizeof(Chinese_texts_13x16) / sizeof(FONT_CHN13X16_t);
 
     if (index >= chn_count) return;
 
@@ -139,7 +139,7 @@ static void show_chn_char_13x16(uint16_t x, uint16_t y, uint16_t chn_code, uint8
     {
         for (j = 0; j < 13; j++)  // 13列
         {
-            uint8_t pixel_data = Chinese_text_13x16[index]._ucCHN_Code[i * 13 + j];
+            uint8_t pixel_data = Chinese_texts_13x16[index]._ucCHN_Code[i * 13 + j];
 
             if (mode == 1)  // 反色
                 pixel_data = ~pixel_data;
@@ -179,7 +179,7 @@ static void show_eng_char_7x16(uint16_t x, uint16_t y, uint8_t ascii_char, uint8
     {
         for (j = 0; j < 7; j++)  // 7列
         {
-            uint8_t pixel_data = english_text_7x16[ascii_index * 14 + i * 7 + j];
+            uint8_t pixel_data = english_texts_7x16[ascii_index * 14 + i * 7 + j];
 
             if (mode == 1)  // 反色
                 pixel_data = ~pixel_data;
