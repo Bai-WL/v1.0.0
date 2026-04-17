@@ -24,10 +24,10 @@ extern "C" {
 // ============================================================================
 
 /** 位装置总数 (0-16383) */
-#define BIT_DEVICE_COUNT 16383
+#define BIT_DEVICE_COUNT 3999
 
 /** 字装置总数 */
-#define WORD_DEVICE_COUNT 9999
+#define WORD_DEVICE_COUNT 2000
 
 /** 字装置起始地址 */
 #define WORD_DEVICE_START 2914

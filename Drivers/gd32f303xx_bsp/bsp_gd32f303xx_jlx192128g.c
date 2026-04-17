@@ -80,8 +80,12 @@ static void vSpiSendCmd(uint8_t byte);
 static void vLcdSetCursor(uint8_t sx, uint8_t sy, uint8_t lenx, uint8_t leny);
 static void vShowCHNChar(uint16_t _usx, uint16_t _usy, uint8_t *_pcStr, uint8_t _ucSize, uint8_t _ucMode);
 static void vShowENGChar(uint16_t _usx, uint16_t _usy, uint8_t *_pcStr, uint8_t _ucSize, uint8_t _ucMode);
-static void vShowENGChar_Any_row(uint16_t _usx, uint16_t _usy, uint8_t *_pcStr, uint8_t _ucSize, uint8_t _ucMode);
-static void vShowCHNChar_Any_row(uint16_t _usx, uint16_t _usy, uint8_t *_pcStr, uint8_t _ucSize, uint8_t _ucMode);
+
+// 外部声明字体数据
+extern const FONT_CHN16X16_t Chinese_text_16x16[];
+extern const char english_text_8x16[];
+extern const FONT_CHN13X16_t Chinese_text_13x16[];
+extern const char english_text_7x16[];
 
 static char frame_buffer_0[192 * 16] = {0};
 static char frame_buffer_1[192 * 16] = {0};
@@ -615,33 +619,52 @@ static void vCHNHashMake(void)
 {
     int i;
     uint16_t b16tmp;
-    int b32tmp;
-    int usCNCnt = sizeof(Chinese_text_13x16) / sizeof(FONT_CHN13X16_t);
-    struct chn_hash_list *ptmp;
+    uint32_t b32tmp;
+    int usCNCnt = usCNCntGet_13x16();
+    struct chn_hash_list *pNewNode;
+    struct chn_hash_list *pCurr;
 
+    /* 避免重复初始化 */
     if (hash_init_flag != 0)
         return;
 
+    /* 清空所有桶 */
     memset(chn_hash_13x16, 0, 512 * sizeof(struct chn_hash_list *));
     hash_init_flag = 1;
+
     for (i = 0; i < usCNCnt; i++)
     {
+        /* 获取汉字编码（小端序，取决于实际存储） */
         b16tmp = *((uint16_t *)Chinese_text_13x16[i]._ucIndex);
-        b32tmp = ulCHNHashFunc(b16tmp);
-        ptmp = (struct chn_hash_list *)(chn_hash_13x16 + b32tmp);
-        while (ptmp->next != NULL)
+        b32tmp = ulCHNHashFunc(b16tmp);  /* 计算哈希桶索引 0~511 */
+        if(b32tmp == 0x153)
         {
-            ptmp = ptmp->next;
+            __NOP();
         }
-        ptmp->next = (struct chn_hash_list *)bsp_malloc(sizeof(struct chn_hash_list));
-        if (ptmp->next != NULL)
+        /* 分配新节点 */
+        pNewNode = (struct chn_hash_list *)bsp_malloc(sizeof(struct chn_hash_list));
+        if (pNewNode == NULL)
         {
-            memset(ptmp->next, 0, sizeof(struct chn_hash_list));
-            ptmp->next->idx = i;
+            bsp_assert(1);  /* 内存分配失败，系统死机 */
+        }
+        pNewNode->idx = i;
+        pNewNode->next = NULL;
+
+        /* 插入到对应桶的链表尾部 */
+        if (chn_hash_13x16[b32tmp] == NULL)
+        {
+            /* 桶为空，新节点成为头节点 */
+            chn_hash_13x16[b32tmp] = pNewNode;
         }
         else
         {
-            bsp_assert(1);
+            /* 遍历到链表末尾 */
+            pCurr = chn_hash_13x16[b32tmp];
+            while (pCurr->next != NULL)
+            {
+                pCurr = pCurr->next;
+            }
+            pCurr->next = pNewNode;
         }
     }
 }
@@ -652,7 +675,7 @@ static void vCHNHashMake16x16(void)
     int i;
     uint16_t b16tmp;
     int b32tmp;
-    int usCNCnt = sizeof(Chinese_text_16x16) / sizeof(FONT_CHN16_t);
+    int usCNCnt = usCNCntGet_16x16();
     struct chn_hash_list *ptmp;
 
     if (hash_init_flag_16x16 != 0)
@@ -681,30 +704,40 @@ static void vCHNHashMake16x16(void)
         }
     }
 }
-static uint32_t ulCHNHashMapGetIdx(const uint32_t key)
+
+uint32_t ulCHNHashMapGetIdx(const uint32_t key)
 {
-    struct chn_hash_list *ptmp;
-    uint16_t b16tmp;
+    struct chn_hash_list *pNode;
     uint32_t b32tmp;
+    uint16_t b16tmp;
     uint32_t ret = 0xffff;
+
+    /* 哈希表未初始化，返回无效索引 */
     if (!hash_init_flag)
         return 0xffff;
 
+    /* 计算哈希桶索引 */
     b32tmp = ulCHNHashFunc(key);
-    ptmp = (struct chn_hash_list *)(chn_hash_13x16 + b32tmp);
-    while (ptmp->next != NULL)
+
+    /* 获取对应桶的链表头 */
+    pNode = chn_hash_13x16[b32tmp];
+
+    /* 遍历链表，查找编码匹配的节点 */
+    while (pNode != NULL)
     {
-        b16tmp = *((uint16_t *)Chinese_text_13x16[ptmp->next->idx]._ucIndex); /* FIXME：此处读数据需要做边界保护 */
+        /* 取出节点中存储的字库索引对应的汉字编码 */
+        b16tmp = *((uint16_t *)Chinese_text_13x16[pNode->idx]._ucIndex);
         if (b16tmp == key)
         {
-            ret = ptmp->next->idx;
+            ret = pNode->idx;   /* 找到，返回字库索引 */
             break;
         }
-        ptmp = ptmp->next;
+        pNode = pNode->next;    /* 继续下一个节点 */
     }
 
     return ret;
 }
+
 static uint32_t ulCHNHashMapGetIdx16x16(const uint32_t key)
 {
     struct chn_hash_list *ptmp;
@@ -746,9 +779,9 @@ static void vShowCHNChar(uint16_t _usx, uint16_t _usy, uint8_t *_pcStr, uint8_t 
     if (_ucSize == 0)
     { // 16x16字符
 #ifdef CHN13X16
-        usCNCnt = sizeof(Chinese_text_13x16) / sizeof(FONT_CHN13X16_t);
+        usCNCnt = usCNCntGet_13x16();
 #else
-        usCNCnt = sizeof(Chinese_text_16x16) / sizeof(FONT_CHN16_t);
+        usCNCnt = usCNCntGet_16x16();
 #endif
         i = ulCHNHashMapGetIdx(*((uint16_t *)_pcStr));
         if (i >= usCNCnt)
@@ -830,7 +863,7 @@ static void vShowCHNChar(uint16_t _usx, uint16_t _usy, uint8_t *_pcStr, uint8_t 
     }
     else if (_ucSize == 1)
     { // 16x16字符
-        usCNCnt = sizeof(Chinese_text_16x16) / sizeof(FONT_CHN16_t);
+        usCNCnt = usCNCntGet_16x16();
         i = ulCHNHashMapGetIdx16x16(*((uint16_t *)_pcStr));
         if (i >= usCNCnt)
             return;
@@ -1047,333 +1080,5 @@ void bsp_JLXLcdShowBottonIcon(const char *bottonIcon)
         return; // 如果指针为空，直接返回
     memcpy(frame_buffer, bottonIcon, 192 * 16);
 }
+/*B_WL增加函数*/
 
-void bsp_JLXLcdShowString_Any_row(uint16_t _usx, uint16_t _usy, const char *_pcStr, uint8_t _ucSize, uint8_t _ucMode)
-{
-    uint8_t _ucEntLine = 2;
-    uint8_t _ucEngWSize = 8;
-    uint8_t _ucChnWSize = 16;
-    uint8_t _ucCharType = 0; // english default
-
-    /* 非法参数检测 */
-    bsp_assert(_usx < JLXLCD_W);
-    bsp_assert(_usy < (JLXLCD_H));
-
-    /* 根据字体大小设置调整参数 */
-    if (_ucSize == 0)
-    {
-        _ucEntLine = 2;
-#ifdef CHN13X16
-        _ucChnWSize = 13; /* XXX: 修改该值，可以调整字间距 */
-#else
-        _ucChnWSize = 16;
-#endif
-        _ucEngWSize = 7;
-    }
-    else if (_ucSize == 1)
-    {
-        _ucEntLine = 2;
-        _ucChnWSize = 18;
-        _ucEngWSize = 8;
-    }
-    else
-    {
-        _ucEntLine = 3;
-        _ucChnWSize = 24;
-        _ucEngWSize = 12;
-    }
-
-    /* 绘制单个字符 */
-    while (*_pcStr != '\0')
-    {
-        _ucCharType = (*_pcStr & 0x80);
-
-        if ((_usx + (_ucCharType ? _ucChnWSize : _ucEngWSize)) > JLXLCD_W)
-        { // 换行
-            _usx = 0;
-            if ((_usy + _ucEntLine) * 8 >= JLXLCD_H)
-            {
-                return;
-            }
-            else
-            {
-                return;
-            }
-        }
-
-        if (_ucCharType)
-        { /* 该字符为汉字 */
-            vShowCHNChar_Any_row(_usx, _usy, (uint8_t *)_pcStr, _ucSize, _ucMode);
-            _pcStr += 2;
-            _usx += _ucChnWSize;
-        }
-        else
-        {
-            if (*(uint8_t *)_pcStr == ' ')
-            {
-                _ucEngWSize = 5;
-            }
-            else if (*(uint8_t *)_pcStr == '-')
-            {
-                _ucEngWSize = 6;
-            }
-            else
-            {
-                _ucEngWSize = 7;
-            }
-            vShowENGChar_Any_row(_usx, _usy, (uint8_t *)_pcStr, _ucSize, _ucMode);
-            _pcStr += 1;
-            _usx += _ucEngWSize;
-        }
-    }
-}
-
-static void vShowCHNChar_Any_row(uint16_t _usx, uint16_t _usy, uint8_t *_pcStr, uint8_t _ucSize, uint8_t _ucMode)
-{
-    uint16_t usCNCnt = 0;
-    uint32_t i, j, k;
-    _usy = _usy - 2;
-    if (_ucSize == 0)
-    { // 16x16字符
-#ifdef CHN13X16
-        usCNCnt = sizeof(Chinese_text_13x16) / sizeof(FONT_CHN13X16_t);
-#else
-        usCNCnt = sizeof(Chinese_text_16x16) / sizeof(FONT_CHN16_t);
-#endif
-        i = ulCHNHashMapGetIdx(*((uint16_t *)_pcStr));
-        if (i >= usCNCnt)
-            return;
-#ifdef JLX_SPIDMA
-#ifdef CHN13X16
-        uint16_t start_page = _usy / 8;  // 起始页
-                                         //        uint16_t end_page = (_usy + 15) / 8; // 结束页
-        uint8_t start_offset = _usy % 8; // 起始偏移
-        for (j = 0; j < 2; j++)
-        {
-            for (k = 0; k < 13; k++)
-            {
-                uint8_t pixel_data = Chinese_text_13x16[i]._ucCHN_Code[j * 13 + k];
-                switch (_ucMode)
-                {
-                case 0:
-                    if (start_offset)
-                    {
-                        frame_buffer[_usx + (start_page + j) * 192 + k] |= pixel_data >> start_offset;
-                        frame_buffer[_usx + (start_page + j + 1) * 192 + k] |= (uint8_t)(pixel_data << (8 - start_offset));
-                    }
-                    else
-                    {
-                        frame_buffer[_usx + (start_page + j) * 192 + k] |= pixel_data;
-                    }
-                    break;
-                case 1:
-                    frame_buffer[_usx + (_usy + j) * 192 + k] ^= ~(Chinese_text_13x16[i]._ucCHN_Code[j * 13 + k]);
-                    break;
-                case 2:
-                    if (j == 1)
-                    {
-                        frame_buffer[_usx + (_usy + j) * 192 + k] = (Chinese_text_13x16[i]._ucCHN_Code[j * 13 + k]) | 0x01;
-                    }
-                    else
-                    {
-                        frame_buffer[_usx + (_usy + j) * 192 + k] = (Chinese_text_13x16[i]._ucCHN_Code[j * 13 + k]);
-                    }
-                case 3:
-                    if (((_usx + (_usy + j) * 192 + k) % 192 >= 1) && ((_usx + (_usy + j) * 192 + k) % 192 <= 192))
-                    {
-                        frame_buffer[_usx + (_usy + j) * 192 + k] ^= Chinese_text_13x16[i]._ucCHN_Code[j * 13 + k];
-                    }
-                    break;
-                }
-            }
-        }
-#else
-        for (j = 0; j < 32; j++)
-        {
-            if (!_ucMode)
-            {
-                frame_buffer[_usx + (_usy + j / 16) * 192 + (j % 16)] = Chinese_text_16x16[i]._ucCHN_Code[j];
-            }
-            else
-            {
-                frame_buffer[_usx + (_usy + j / 16) * 192 + (j % 16)] = ~(Chinese_text_16x16[i]._ucCHN_Code[j]);
-            }
-        }
-#endif
-#else
-#ifdef CHN13X16
-        vLcdSetCursor(_usx, _usy, 13, 2);
-        for (j = 0; j < 26; j++)
-        {
-            if (!_ucMode)
-            {
-                vSpiSendData(Chinese_text_13x16[i]._ucCHN_Code[j]);
-            }
-            else
-            {
-                vSpiSendData(~(Chinese_text_13x16[i]._ucCHN_Code[j]));
-            }
-        }
-#else
-        vLcdSetCursor(_usx, _usy, 16, 2);
-        for (j = 0; j < 32; j++)
-        {
-            if (!_ucMode)
-            {
-                vSpiSendData(Chinese_text_16x16[i]._ucCHN_Code[j]);
-            }
-            else
-            {
-                vSpiSendData(~(Chinese_text_16x16[i]._ucCHN_Code[j]));
-            }
-        }
-#endif
-#endif
-    }
-    else if (_ucSize == 1)
-    { // 16x16字符
-        usCNCnt = sizeof(Chinese_text_16x16) / sizeof(FONT_CHN16_t);
-        i = ulCHNHashMapGetIdx16x16(*((uint16_t *)_pcStr));
-        if (i >= usCNCnt)
-            return;
-#ifdef JLX_SPIDMA
-        //        for (j = 0; j < 32; j++)
-        //        {
-        //            if (!_ucMode)
-        //            {
-        //                frame_buffer[_usx + (_usy + j / 16) * 192 + (j % 16)] = Chinese_text_16x16[i]._ucCHN_Code[j];
-        //            }
-        //            else if(_ucMode == 1)
-        //            {
-        //                frame_buffer[_usx + (_usy + j / 16) * 192 + (j % 16)] = ~(Chinese_text_16x16[i]._ucCHN_Code[j]);
-        //            }
-        //						else if(_ucMode == 3)
-        //            {
-        //								if(((_usx + (_usy + j / 16) * 192 + (j % 16))%192 >=20)&&((_usx + (_usy + j / 16) * 192 + (j % 16))%192<=172))
-        //                frame_buffer[_usx + (_usy + j / 16) * 192 + (j % 16)] ^= (Chinese_text_16x16[i]._ucCHN_Code[j]);
-        //            }
-        //        }
-        for (j = 0; j < 2; j++)
-        {
-            for (k = 0; k < 16; k++)
-            {
-                switch (_ucMode)
-                {
-                case 0:
-                    frame_buffer[_usx + (_usy + j) * 192 + k] ^= Chinese_text_16x16[i]._ucCHN_Code[j * 16 + k];
-                    break;
-                case 1:
-                    frame_buffer[_usx + (_usy + j) * 192 + k] ^= ~(Chinese_text_16x16[i]._ucCHN_Code[j * 16 + k]);
-                    break;
-                case 2:
-                    if (j == 1)
-                    {
-                        frame_buffer[_usx + (_usy + j) * 192 + k] = (Chinese_text_16x16[i]._ucCHN_Code[j * 16 + k]) | 0x01;
-                    }
-                    else
-                    {
-                        frame_buffer[_usx + (_usy + j) * 192 + k] = (Chinese_text_16x16[i]._ucCHN_Code[j * 16 + k]);
-                    }
-                case 3:
-                    if (((_usx + (_usy + j) * 192 + k) % 192 >= 1) && ((_usx + (_usy + j) * 192 + k) % 192 <= 192))
-                    {
-                        frame_buffer[_usx + (_usy + j) * 192 + k] ^= Chinese_text_16x16[i]._ucCHN_Code[j * 16 + k];
-                    }
-                    break;
-                }
-            }
-        }
-#else
-#endif
-    }
-    else if (_ucSize == 2)
-    { // 24x24字符
-        __NOP();
-    }
-}
-
-/**
- * @brief 绘制英文
- *
- * @param _usx
- * @param _usy
- * @param _pcStr
- * @param _ucSize
- * @param _ucMode
- */
-static void vShowENGChar_Any_row(uint16_t _usx, uint16_t _usy, uint8_t *_pcStr, uint8_t _ucSize, uint8_t _ucMode)
-{
-    uint8_t usASCIndex = 0;
-    uint32_t i, j;
-    //_usy = _usy;
-    usASCIndex = *_pcStr - ' ';
-    if (usASCIndex > 94)
-    { // ASCII位置超限
-        return;
-    }
-
-    if (_ucSize == 0 || _ucSize == 1)
-    { // 8x16字符
-#ifdef JLX_SPIDMA
-        uint16_t start_page = _usy / 8;  // 起始页
-        uint8_t start_offset = _usy % 8; // 起始偏移
-        for (i = 0; i < 2; i++)
-        {
-            for (j = 0; j < 7; j++)
-            {
-                uint8_t pixel_data = english_text_7x16[(usASCIndex * 14) + (i * 7) + j];
-                switch (_ucMode)
-                {
-                case 0:
-                    if (start_offset)
-                    {
-                        frame_buffer[_usx + (start_page + i) * 192 + j] |= pixel_data >> start_offset;
-                        frame_buffer[_usx + (start_page + i + 1) * 192 + j] |= (uint8_t)(pixel_data << (8 - start_offset));
-                    }
-                    else
-                    {
-                        frame_buffer[_usx + (start_page + i) * 192 + j] |= pixel_data;
-                    }
-                    break;
-                case 1:
-                    frame_buffer[_usx + (_usy + i) * 192 + j] ^= ~(english_text_8x16[(usASCIndex << 4) + (i << 3) + j]);
-                    break;
-                case 2:
-                    if (i == 1)
-                    {
-                        frame_buffer[_usx + (_usy + i) * 192 + j] = english_text_8x16[(usASCIndex << 4) + (i << 3) + j] | 0x01;
-                    }
-                    else
-                    {
-                        frame_buffer[_usx + (_usy + i) * 192 + j] = english_text_8x16[(usASCIndex << 4) + (i << 3) + j];
-                    }
-                    break;
-                case 3:
-                    if (((_usx + (_usy + i) * 192 + j) % 192 >= 10) && ((_usx + (_usy + i) * 192 + j) % 192 <= 186))
-                    {
-                        frame_buffer[_usx + (_usy + i) * 192 + j] ^= english_text_8x16[(usASCIndex << 4) + (i << 3) + j];
-                    }
-                    break;
-                }
-            }
-        }
-
-#else
-        vLcdSetCursor(_usx, _usy, 8, 2);
-        for (i = 0; i < 16; i++)
-        {
-            if (!_ucMode)
-            {
-                vSpiSendData(english_text_8x16[usASCIndex * 16 + i]);
-            }
-            else
-            {
-                vSpiSendData(~(english_text_8x16[usASCIndex * 16 + i]));
-            }
-        }
-#endif
-    }
-    else if (_ucSize == 2)
-    { // 16x16字符
-    }
-}

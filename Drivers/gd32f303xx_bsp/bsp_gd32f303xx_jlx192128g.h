@@ -42,6 +42,5 @@ void bsp_JLXLcdShowString(uint16_t _usx, uint16_t _usy, const char *_pcStr, uint
 void bsp_JLXLcdShow(uint16_t _usx, uint16_t _usy, uint16_t _width, uint16_t _height, const char *_icon, uint8_t _ucMode);
 void bsp_JLXLcdRefreshScreen(void);
 void bsp_JLXLcdShowBottonIcon(const char *bottonIcon);
-void bsp_JLXLcdShowString_Any_row(uint16_t _usx, uint16_t _usy, const char *_pcStr, uint8_t _ucSize, uint8_t _ucMode);
-
+uint32_t ulCHNHashMapGetIdx(const uint32_t key);
 #endif /* __BSP_GD32F303XX_JLX192128G_H__ */
