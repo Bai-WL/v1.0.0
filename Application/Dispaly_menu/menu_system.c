@@ -50,6 +50,10 @@ static MenuContext menu_ctx = {.current_menu_id = 0,
                                .current_item_id = 0,
                                .scroll_position = 0,
                                .visible_items = 5,  // VISIBLE_ITEMS 计算结果为 88/16 = 5
+                               .current_page = 1,
+                               .total_pages = 1,
+                               .items_in_current_page = 0,
+                               .page_start_index = 0,
                                .is_editing = false,
                                .edit_item_id = 0,
                                .history_top = 0,
@@ -67,8 +71,17 @@ static RenderCallback custom_render_callback = NULL;
 static MenuItem* get_menu_item(uint16_t id);
 static MenuItem* get_first_child(uint16_t parent_id);
 static MenuItem* get_next_sibling(uint16_t current_id);
-static uint8_t count_children(uint16_t parent_id);
-static void render_menu_item_internal(uint8_t index, MenuItem* item, bool is_selected,
+static uint16_t count_children(uint16_t parent_id);
+static MenuItem* get_child_at_index(uint16_t parent_id, uint16_t index);
+static uint16_t get_child_index(uint16_t parent_id, uint16_t child_id);
+static uint16_t get_menu_item_max_text_width(const MenuItem* item, uint8_t text_x);
+static uint8_t get_menu_item_height(MenuItem* item);
+static uint8_t build_page_from_index(uint16_t parent_id, uint16_t start_index,
+                                     uint16_t* page_height);
+static bool get_page_bounds_by_number(uint16_t parent_id, uint8_t page_number,
+                                      uint16_t* page_start_index, uint8_t* items_in_page,
+                                      uint8_t* total_pages);
+static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_selected,
                                       bool is_editing);
 static void render_header_internal(void);
 static void render_footer_internal(void);
@@ -80,6 +93,17 @@ static void handle_edit_increase(void);
 static void handle_edit_decrease(void);
 static void handle_edit_confirm(void);
 static void handle_edit_cancel(void);
+
+// 新增长按处理函数
+static void handle_short_press(KeyEvent* event);
+static void handle_long_press(KeyEvent* event);
+static void handle_repeat_event(KeyEvent* event);
+
+// 新增翻页相关函数
+static void update_page_info(void);
+static void handle_page_up(void);
+static void handle_page_down(void);
+static void render_page_info(void);
 
 // ============================================================================
 // 文本处理函数实现
@@ -109,7 +133,6 @@ uint8_t menu_wrap_text_lines(char line1[32], char line2[32], const char* text, u
     uint16_t char_count = 0;
     uint8_t line_index = 0;
     uint16_t last_space_pos = 0;  // 最后一个空格位置
-    uint16_t last_space_width = 0;
     const char* src = text;
     char* current_line = line1;
 
@@ -137,7 +160,6 @@ uint8_t menu_wrap_text_lines(char line1[32], char line2[32], const char* text, u
                 char_count = 0;
                 current_width = 0;
                 last_space_pos = 0;
-                last_space_width = 0;
 
                 // 重新开始处理（src已更新）
                 continue;
@@ -163,7 +185,6 @@ uint8_t menu_wrap_text_lines(char line1[32], char line2[32], const char* text, u
         // 记录空格位置，用于在单词边界换行
         if (*src == ' ' || *src == '\t') {
             last_space_pos = char_count;
-            last_space_width = current_width;
         }
 
         current_line[char_count++] = *src;
@@ -228,8 +249,8 @@ static MenuItem* get_next_sibling(uint16_t current_id) {
 }
 
 // 计算指定父菜单的子项数量
-static uint8_t count_children(uint16_t parent_id) {
-    uint8_t count = 0;
+static uint16_t count_children(uint16_t parent_id) {
+    uint16_t count = 0;
     MenuItem* child = get_first_child(parent_id);
 
     while (child != NULL) {
@@ -240,19 +261,180 @@ static uint8_t count_children(uint16_t parent_id) {
     return count;
 }
 
+// 获取指定父菜单的第index个子项
+static MenuItem* get_child_at_index(uint16_t parent_id, uint16_t index) {
+    MenuItem* child = get_first_child(parent_id);
+
+    while (child != NULL && index > 0) {
+        child = get_next_sibling(child->id);
+        index--;
+    }
+
+    return child;
+}
+
+// 获取指定子项在父菜单中的索引
+static uint16_t get_child_index(uint16_t parent_id, uint16_t child_id) {
+    uint16_t index = 0;
+    MenuItem* child = get_first_child(parent_id);
+
+    while (child != NULL) {
+        if (child->id == child_id) {
+            return index;
+        }
+
+        child = get_next_sibling(child->id);
+        index++;
+    }
+
+    return UINT16_MAX;
+}
+
+// 计算菜单项的最大文本显示宽度
+static uint16_t get_menu_item_max_text_width(const MenuItem* item, uint8_t text_x) {
+    uint16_t max_text_width = JLXLCD_W - text_x - 16;
+
+    if (item == NULL) {
+        return max_text_width;
+    }
+
+    switch (item->type) {
+    case MENU_ITEM_TYPE_SUBMENU:
+        max_text_width -= 20;
+        break;
+
+    case MENU_ITEM_TYPE_TOGGLE:
+        max_text_width -= 32;
+        break;
+
+    case MENU_ITEM_TYPE_VALUE:
+        max_text_width -= 48;
+        break;
+
+    case MENU_ITEM_TYPE_LIST:
+        max_text_width -= 64;
+        break;
+
+    default:
+        break;
+    }
+
+    return max_text_width;
+}
+
+// 获取菜单项实际显示高度
+static uint8_t get_menu_item_height(MenuItem* item) {
+    TextLayout text_layout;
+    const char* text;
+    uint8_t text_x = 16;
+
+    if (item == NULL) {
+        return default_layout.item_height;
+    }
+
+    text = get_string(item->text_id);
+    if (text == NULL || text[0] == '\0') {
+        return default_layout.item_height;
+    }
+
+    if (item->icon_id != 0) {
+        text_x = 30;
+    }
+
+    menu_calculate_text_layout(&text_layout, text, get_menu_item_max_text_width(item, text_x));
+    if (text_layout.total_height == 0) {
+        return default_layout.item_height;
+    }
+
+    if (text_layout.total_height > default_layout.menu_area_height) {
+        return default_layout.menu_area_height;
+    }
+
+    return text_layout.total_height;
+}
+
+// 从指定索引开始构建一页，返回该页实际包含的项数
+static uint8_t build_page_from_index(uint16_t parent_id, uint16_t start_index,
+                                     uint16_t* page_height) {
+    uint16_t total_height = 0;
+    uint8_t item_count = 0;
+    MenuItem* item = get_child_at_index(parent_id, start_index);
+
+    while (item != NULL) {
+        uint8_t item_height = get_menu_item_height(item);
+
+        if (item_count > 0 && (total_height + item_height > default_layout.menu_area_height)) {
+            break;
+        }
+
+        total_height += item_height;
+        item_count++;
+        item = get_next_sibling(item->id);
+    }
+
+    if (page_height != NULL) {
+        *page_height = total_height;
+    }
+
+    return item_count;
+}
+
+// 按页码获取页面边界信息
+static bool get_page_bounds_by_number(uint16_t parent_id, uint8_t page_number,
+                                      uint16_t* page_start_index, uint8_t* items_in_page,
+                                      uint8_t* total_pages) {
+    uint16_t child_count = count_children(parent_id);
+    uint16_t current_index = 0;
+    uint8_t current_page = 1;
+
+    if (child_count == 0) {
+        if (page_start_index != NULL) {
+            *page_start_index = 0;
+        }
+        if (items_in_page != NULL) {
+            *items_in_page = 0;
+        }
+        if (total_pages != NULL) {
+            *total_pages = 1;
+        }
+        return (page_number <= 1);
+    }
+
+    while (current_index < child_count) {
+        uint8_t page_items = build_page_from_index(parent_id, current_index, NULL);
+
+        if (page_items == 0) {
+            page_items = 1;
+        }
+
+        if (current_page == page_number) {
+            if (page_start_index != NULL) {
+                *page_start_index = current_index;
+            }
+            if (items_in_page != NULL) {
+                *items_in_page = page_items;
+            }
+        }
+
+        current_index += page_items;
+        current_page++;
+    }
+
+    if (total_pages != NULL) {
+        *total_pages = current_page - 1;
+    }
+
+    return (page_number < current_page);
+}
+
 // ============================================================================
 // 渲染函数实现
 // ============================================================================
 
 // 渲染菜单项（支持多行文本）
-static void render_menu_item_internal(uint8_t index, MenuItem* item, bool is_selected,
+static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_selected,
                                       bool is_editing) {
     if (item == NULL) return;
-
-    uint8_t y_pos = default_layout.menu_area_top + (index * default_layout.item_height);
-
-    // 清除区域（清除整个菜单项区域）
-    JLX_ClearRectPixel(0, y_pos, JLXLCD_W, default_layout.item_height, 0);
 
     // 绘制选择指示器
     if (is_selected) {
@@ -281,29 +463,7 @@ static void render_menu_item_internal(uint8_t index, MenuItem* item, bool is_sel
 
     // 计算文本的最大可用宽度
     // 需要根据菜单项类型为附加信息留出空间
-    uint16_t max_text_width = JLXLCD_W - text_x - 16;  // 默认留出16像素右边距
-
-    // 根据菜单项类型调整文本宽度，为附加信息预留空间
-    switch (item->type) {
-    case MENU_ITEM_TYPE_SUBMENU:
-        max_text_width -= 20;  // ">" 指示器
-        break;
-
-    case MENU_ITEM_TYPE_TOGGLE:
-        max_text_width -= 32;  // 为开关值留出空间
-        break;
-
-    case MENU_ITEM_TYPE_VALUE:
-        max_text_width -= 48;  // 为数值留出空间
-        break;
-
-    case MENU_ITEM_TYPE_LIST:
-        max_text_width -= 64;  // 为选项文本留出空间
-        break;
-
-    default:
-        break;
-    }
+    uint16_t max_text_width = get_menu_item_max_text_width(item, text_x);
 
     // 计算文本布局（自动换行）
     menu_calculate_text_layout(&text_layout, text, max_text_width);
@@ -431,7 +591,7 @@ static void render_footer_internal(void) {
     uint8_t y_pos = JLXLCD_H - default_layout.footer_height;
 
     // 清除底部状态栏区域
-    JLX_ClearRectPixel(0, JLXLCD_W, y_pos, default_layout.footer_height, 0);
+    JLX_ClearRectPixel(0, y_pos, JLXLCD_W, default_layout.footer_height, 0);
 
     // 绘制帮助文本
     MenuItem* current_item = get_menu_item(menu_ctx.current_item_id);
@@ -453,36 +613,45 @@ static void render_footer_internal(void) {
         // JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos + 4, "确认:→ 返回:←", default_layout.font_size,
         //                      0);
     }
+
+    // 显示页码信息（仅在多页时显示）
+    if (menu_ctx.total_pages > 1) {
+        render_page_info();
+    }
 }
 
 // 完整渲染函数
 static void render_full(void) {
+    uint16_t rendered_height = 0;
+    uint8_t rendered_items = 0;
+
     // 渲染标题栏
     render_header_internal();
 
+    // 清除菜单区域，按动态高度重新布局整页内容
+    JLX_ClearRectPixel(0, default_layout.menu_area_top, JLXLCD_W, default_layout.menu_area_height,
+                       0);
+
     // 渲染菜单项
-    MenuItem* current_item = get_first_child(menu_ctx.current_menu_id);
-    uint8_t item_index = 0;
-    uint8_t display_index = 0;
+    MenuItem* current_item =
+        get_child_at_index(menu_ctx.current_menu_id, menu_ctx.page_start_index);
 
-    while (current_item != NULL && display_index < VISIBLE_ITEMS) {
-        // 跳过滚出屏幕的项
-        if (item_index >= menu_ctx.scroll_position) {
-            bool is_selected = (current_item->id == menu_ctx.current_item_id);
-            bool is_editing = is_selected && menu_ctx.is_editing;
+    while (current_item != NULL && rendered_items < menu_ctx.items_in_current_page &&
+           rendered_height < default_layout.menu_area_height) {
+        bool is_selected = (current_item->id == menu_ctx.current_item_id);
+        bool is_editing = is_selected && menu_ctx.is_editing;
 
-            // 使用自定义渲染回调或默认渲染
-            if (custom_render_callback != NULL) {
-                custom_render_callback(current_item, display_index, is_selected, is_editing);
-            } else {
-                render_menu_item_internal(display_index, current_item, is_selected, is_editing);
-            }
-
-            display_index++;
+        // 使用自定义渲染回调或默认渲染
+        if (custom_render_callback != NULL) {
+            custom_render_callback(current_item, rendered_items, is_selected, is_editing);
+        } else {
+            render_menu_item_internal(default_layout.menu_area_top + rendered_height, current_item,
+                                      is_selected, is_editing);
         }
 
+        rendered_height += get_menu_item_height(current_item);
+        rendered_items++;
         current_item = get_next_sibling(current_item->id);
-        item_index++;
     }
 
     // 渲染底部状态栏
@@ -493,66 +662,85 @@ static void render_full(void) {
 // 导航和事件处理函数
 // ============================================================================
 
-// 上移选择
+// 上移选择（支持翻页逻辑）
 static void handle_move_up(void) {
+    uint16_t current_index;
+
     if (menu_ctx.is_editing) {
         handle_edit_increase();
         return;
     }
 
-    MenuItem* current = get_menu_item(menu_ctx.current_item_id);
-    if (current == NULL) return;
+    current_index = get_child_index(menu_ctx.current_menu_id, menu_ctx.current_item_id);
+    if (current_index == UINT16_MAX) {
+        return;
+    }
 
-    // 查找前一个兄弟项
-    MenuItem* prev = get_first_child(menu_ctx.current_menu_id);
-    MenuItem* candidate = NULL;
+    if (current_index == menu_ctx.page_start_index) {
+        if (menu_ctx.current_page > 1) {
+            uint16_t target_page_start_index = 0;
+            uint8_t target_items_in_page = 0;
 
-    while (prev != NULL) {
-        if (prev->id == current->id) {
-            if (candidate != NULL) {
-                menu_ctx.current_item_id = candidate->id;
-                menu_ctx.need_redraw = true;
-
-                // 调整滚动位置
-                if (menu_ctx.scroll_position > 0) {
-                    menu_ctx.scroll_position--;
+            if (get_page_bounds_by_number(menu_ctx.current_menu_id, menu_ctx.current_page - 1,
+                                          &target_page_start_index, &target_items_in_page, NULL) &&
+                target_items_in_page > 0) {
+                MenuItem* last_item = get_child_at_index(
+                    menu_ctx.current_menu_id, target_page_start_index + target_items_in_page - 1);
+                if (last_item != NULL) {
+                    menu_ctx.current_item_id = last_item->id;
+                    update_page_info();
+                    menu_ctx.need_redraw = true;
                 }
             }
-            break;
         }
-        candidate = prev;
-        prev = get_next_sibling(prev->id);
+        return;
+    }
+
+    MenuItem* prev_item = get_child_at_index(menu_ctx.current_menu_id, current_index - 1);
+    if (prev_item != NULL) {
+        menu_ctx.current_item_id = prev_item->id;
+        update_page_info();
+        menu_ctx.need_redraw = true;
     }
 }
 
-// 下移选择
+// 下移选择（支持翻页逻辑）
 static void handle_move_down(void) {
+    uint16_t current_index;
+    uint16_t next_page_start_index;
+
     if (menu_ctx.is_editing) {
         handle_edit_decrease();
         return;
     }
 
-    MenuItem* current = get_menu_item(menu_ctx.current_item_id);
-    if (current == NULL) return;
+    current_index = get_child_index(menu_ctx.current_menu_id, menu_ctx.current_item_id);
+    if (current_index == UINT16_MAX) {
+        return;
+    }
 
-    // 查找下一个兄弟项
-    MenuItem* next = get_next_sibling(current->id);
-    if (next != NULL) {
-        menu_ctx.current_item_id = next->id;
-        menu_ctx.need_redraw = true;
+    if (menu_ctx.items_in_current_page == 0) {
+        return;
+    }
 
-        // 调整滚动位置
-        uint8_t visible_items = VISIBLE_ITEMS;
-        uint8_t item_index = 0;
-        MenuItem* item = get_first_child(menu_ctx.current_menu_id);
-
-        while (item != NULL && item->id != next->id) {
-            item_index++;
-            item = get_next_sibling(item->id);
+    if (current_index < (menu_ctx.page_start_index + menu_ctx.items_in_current_page - 1)) {
+        MenuItem* next_item = get_child_at_index(menu_ctx.current_menu_id, current_index + 1);
+        if (next_item != NULL) {
+            menu_ctx.current_item_id = next_item->id;
+            update_page_info();
+            menu_ctx.need_redraw = true;
         }
+        return;
+    }
 
-        if (item_index >= menu_ctx.scroll_position + visible_items) {
-            menu_ctx.scroll_position = item_index - visible_items + 1;
+    if (menu_ctx.current_page < menu_ctx.total_pages) {
+        next_page_start_index = menu_ctx.page_start_index + menu_ctx.items_in_current_page;
+        MenuItem* next_page_first_item =
+            get_child_at_index(menu_ctx.current_menu_id, next_page_start_index);
+        if (next_page_first_item != NULL) {
+            menu_ctx.current_item_id = next_page_first_item->id;
+            update_page_info();
+            menu_ctx.need_redraw = true;
         }
     }
 }
@@ -566,6 +754,7 @@ static void handle_select_item(void) {
     case MENU_ITEM_TYPE_SUBMENU:
         // 进入子菜单
         menu_ctx.history_stack[menu_ctx.history_top++] = menu_ctx.current_menu_id;
+        menu_ctx.history_item_stack[menu_ctx.history_top - 1] = menu_ctx.current_item_id;
         if (menu_ctx.history_top >= 8) menu_ctx.history_top = 7;
 
         menu_ctx.current_menu_id = current->data.target_menu_id;
@@ -576,6 +765,9 @@ static void handle_select_item(void) {
         if (first_child != NULL) {
             menu_ctx.current_item_id = first_child->id;
         }
+
+        // 更新页面信息
+        update_page_info();
         menu_ctx.need_redraw = true;
         break;
 
@@ -611,13 +803,10 @@ static void handle_back(void) {
     if (menu_ctx.history_top > 0) {
         menu_ctx.history_top--;
         menu_ctx.current_menu_id = menu_ctx.history_stack[menu_ctx.history_top];
-        menu_ctx.scroll_position = 0;
+        menu_ctx.current_item_id = menu_ctx.history_item_stack[menu_ctx.history_top];
 
-        // 设置第一个子项为当前项
-        MenuItem* first_child = get_first_child(menu_ctx.current_menu_id);
-        if (first_child != NULL) {
-            menu_ctx.current_item_id = first_child->id;
-        }
+        // 更新页面信息
+        update_page_info();
         menu_ctx.need_redraw = true;
     }
 }
@@ -742,6 +931,8 @@ void menu_system_init(void) {
     // 初始化菜单上下文
     memset(&menu_ctx, 0, sizeof(MenuContext));
     menu_ctx.visible_items = VISIBLE_ITEMS;
+    menu_ctx.current_page = 1;
+    menu_ctx.total_pages = 1;
     menu_ctx.current_state = MENU_STATE_IDLE;
     menu_ctx.need_redraw = true;
 }
@@ -768,12 +959,15 @@ void menu_start(uint16_t initial_menu_id) {
         menu_ctx.current_item_id = first_child->id;
     }
 
+    // 初始化翻页信息
+    update_page_info();
     menu_ctx.need_redraw = true;
 }
 
 // 设置当前语言
 void menu_set_language(Language lang) {
     set_language(lang);
+    update_page_info();
     menu_ctx.need_redraw = true;
 }
 
@@ -785,6 +979,7 @@ bool menu_navigate_to(uint16_t menu_id) {
     }
 
     menu_ctx.history_stack[menu_ctx.history_top++] = menu_ctx.current_menu_id;
+    menu_ctx.history_item_stack[menu_ctx.history_top - 1] = menu_ctx.current_item_id;
     if (menu_ctx.history_top >= 8) menu_ctx.history_top = 7;
 
     menu_ctx.current_menu_id = menu_id;
@@ -796,6 +991,7 @@ bool menu_navigate_to(uint16_t menu_id) {
         menu_ctx.current_item_id = first_child->id;
     }
 
+    update_page_info();
     menu_ctx.need_redraw = true;
     return true;
 }
@@ -805,14 +1001,9 @@ bool menu_navigate_back(void) {
     if (menu_ctx.history_top > 0) {
         menu_ctx.history_top--;
         menu_ctx.current_menu_id = menu_ctx.history_stack[menu_ctx.history_top];
-        menu_ctx.scroll_position = 0;
+        menu_ctx.current_item_id = menu_ctx.history_item_stack[menu_ctx.history_top];
 
-        // 设置第一个子项为当前项
-        MenuItem* first_child = get_first_child(menu_ctx.current_menu_id);
-        if (first_child != NULL) {
-            menu_ctx.current_item_id = first_child->id;
-        }
-
+        update_page_info();
         menu_ctx.need_redraw = true;
         return true;
     }
@@ -836,6 +1027,7 @@ bool menu_navigate_to_root(void) {
         menu_ctx.current_item_id = first_child->id;
     }
 
+    update_page_info();
     menu_ctx.need_redraw = true;
     return true;
 }
@@ -855,40 +1047,29 @@ MenuState menu_get_current_state(void) {
     return menu_ctx.current_state;
 }
 
-// 处理按键事件
+// 处理按键事件（支持短按、长按、重复触发）
 void menu_handle_key_event(void) {
     KeyEvent event;
     while (key_control_get_event(&event)) {
-        switch (event.key) {
-        case FUNKEY_UP:
-            handle_move_up();
+        // 根据事件类型处理不同的按键行为
+        switch (event.type) {
+        case KEY_EVENT_PRESS:
+            // 短按事件
+            handle_short_press(&event);
             break;
 
-        case FUNKEY_DOWN:
-            handle_move_down();
+        case KEY_EVENT_LONG_PRESS:
+            // 长按事件
+            handle_long_press(&event);
             break;
 
-        case FUNKEY_ENTER:
-            handle_select_item();
-            break;
-
-        case FUNKEY_ESC:
-            handle_back();
-            break;
-
-        case FUNKEY_LEFT:
-            if (menu_ctx.is_editing) {
-                handle_edit_decrease();
-            }
-            break;
-
-        case FUNKEY_RIGHT:
-            if (menu_ctx.is_editing) {
-                handle_edit_increase();
-            }
+        case KEY_EVENT_REPEAT:
+            // 重复触发事件（主要用于长按后的连续操作）
+            handle_repeat_event(&event);
             break;
 
         default:
+            // 忽略未知事件类型
             break;
         }
     }
@@ -960,4 +1141,310 @@ void menu_hide_loading(void) {
 // 获取当前布局配置
 const ScreenLayout* menu_get_default_layout(void) {
     return &default_layout;
+}
+
+// ============================================================================
+// 长按事件处理函数实现
+// ============================================================================
+
+// 处理短按事件（支持翻页）
+static void handle_short_press(KeyEvent* event) {
+    if (event == NULL) return;
+
+    switch (event->key) {
+    case FUNKEY_UP:
+        handle_move_up();
+        break;
+
+    case FUNKEY_DOWN:
+        handle_move_down();
+        break;
+
+    case FUNKEY_ENTER:
+        handle_select_item();
+        break;
+
+    case FUNKEY_ESC:
+        handle_back();
+        break;
+
+    case FUNKEY_LEFT:
+        if (menu_ctx.is_editing) {
+            handle_edit_decrease();
+        } else {
+            // 浏览模式下：向前翻页
+            handle_page_up();
+        }
+        break;
+
+    case FUNKEY_RIGHT:
+        if (menu_ctx.is_editing) {
+            handle_edit_increase();
+        } else {
+            // 浏览模式下：向后翻页
+            handle_page_down();
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+// 处理长按事件（特殊功能：快速导航/快速调整）
+static void handle_long_press(KeyEvent* event) {
+    if (event == NULL) return;
+
+    switch (event->key) {
+    case FUNKEY_UP:
+        if (!menu_ctx.is_editing) {
+            MenuItem* first_item = get_first_child(menu_ctx.current_menu_id);
+            if (first_item != NULL) {
+                menu_ctx.current_item_id = first_item->id;
+                update_page_info();
+                menu_ctx.need_redraw = true;
+            }
+        }
+        break;
+
+    case FUNKEY_DOWN:
+        if (!menu_ctx.is_editing && menu_ctx.total_pages > 0) {
+            uint16_t page_start_index = 0;
+            uint8_t items_in_page = 0;
+
+            if (get_page_bounds_by_number(menu_ctx.current_menu_id, menu_ctx.total_pages,
+                                          &page_start_index, &items_in_page, NULL) &&
+                items_in_page > 0) {
+                MenuItem* last_item = get_child_at_index(menu_ctx.current_menu_id,
+                                                         page_start_index + items_in_page - 1);
+                if (last_item != NULL) {
+                    menu_ctx.current_item_id = last_item->id;
+                    update_page_info();
+                    menu_ctx.need_redraw = true;
+                }
+            }
+        }
+        break;
+
+    case FUNKEY_LEFT:
+        break;
+
+    case FUNKEY_RIGHT:
+        break;
+
+    case FUNKEY_ENTER:
+        break;
+
+    case FUNKEY_ESC:
+        if (!menu_ctx.is_editing) {
+            menu_navigate_to_root();
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+// 处理重复触发事件（主要用于长按后的连续操作）
+static void handle_repeat_event(KeyEvent* event) {
+    if (event == NULL) return;
+
+    switch (event->key) {
+    case FUNKEY_UP:
+        handle_move_up();
+        break;
+
+    case FUNKEY_DOWN:
+        handle_move_down();
+        break;
+
+    case FUNKEY_LEFT:
+        break;
+
+    case FUNKEY_RIGHT:
+        break;
+
+    default:
+        break;
+    }
+}
+
+// ============================================================================
+// 翻页相关函数实现
+// ============================================================================
+
+// 更新页面信息：根据菜单项实际像素高度计算总页数和当前页信息
+static void update_page_info(void) {
+    uint16_t child_count;
+    uint16_t selected_index;
+    uint16_t current_index = 0;
+    uint8_t current_page = 1;
+    bool found_page = false;
+
+    if (menu_items == NULL || menu_item_count == 0) {
+        menu_ctx.total_pages = 1;
+        menu_ctx.current_page = 1;
+        menu_ctx.items_in_current_page = 0;
+        menu_ctx.page_start_index = 0;
+        menu_ctx.scroll_position = 0;
+        menu_ctx.visible_items = 0;
+        return;
+    }
+
+    // 获取当前菜单的子项数量
+    child_count = count_children(menu_ctx.current_menu_id);
+    if (child_count == 0) {
+        menu_ctx.total_pages = 1;
+        menu_ctx.current_page = 1;
+        menu_ctx.items_in_current_page = 0;
+        menu_ctx.page_start_index = 0;
+        menu_ctx.scroll_position = 0;
+        menu_ctx.visible_items = 0;
+        return;
+    }
+
+    // 找到选中项在子项中的索引，如果当前选中项失效则回退到第一页第一项
+    selected_index = get_child_index(menu_ctx.current_menu_id, menu_ctx.current_item_id);
+    if (selected_index == UINT16_MAX) {
+        MenuItem* first_child = get_first_child(menu_ctx.current_menu_id);
+        selected_index = 0;
+        if (first_child != NULL) {
+            menu_ctx.current_item_id = first_child->id;
+        }
+    }
+
+    menu_ctx.total_pages = 0;
+    while (current_index < child_count) {
+        uint8_t page_items = build_page_from_index(menu_ctx.current_menu_id, current_index, NULL);
+
+        if (page_items == 0) {
+            page_items = 1;
+        }
+
+        menu_ctx.total_pages++;
+
+        if (!found_page && selected_index >= current_index &&
+            selected_index < (current_index + page_items)) {
+            menu_ctx.current_page = current_page;
+            menu_ctx.page_start_index = current_index;
+            menu_ctx.items_in_current_page = page_items;
+            found_page = true;
+        }
+
+        current_index += page_items;
+        current_page++;
+    }
+
+    if (menu_ctx.total_pages == 0) {
+        menu_ctx.total_pages = 1;
+    }
+
+    if (!found_page) {
+        menu_ctx.current_page = 1;
+        menu_ctx.page_start_index = 0;
+        menu_ctx.items_in_current_page = build_page_from_index(menu_ctx.current_menu_id, 0, NULL);
+    }
+
+    // 更新滚动位置
+    menu_ctx.scroll_position = menu_ctx.page_start_index;
+    menu_ctx.visible_items = menu_ctx.items_in_current_page;
+}
+
+// 向前翻页（左键）
+static void handle_page_up(void) {
+    uint16_t current_index;
+    uint16_t target_page_start_index = 0;
+    uint8_t target_items_in_page = 0;
+    uint16_t relative_index;
+
+    if (menu_ctx.is_editing) {
+        // 编辑模式下保持原有功能
+        handle_edit_decrease();
+        return;
+    }
+
+    if (menu_ctx.current_page > 1) {
+        current_index = get_child_index(menu_ctx.current_menu_id, menu_ctx.current_item_id);
+        if (current_index == UINT16_MAX) {
+            return;
+        }
+
+        relative_index = current_index - menu_ctx.page_start_index;
+
+        if (get_page_bounds_by_number(menu_ctx.current_menu_id, menu_ctx.current_page - 1,
+                                      &target_page_start_index, &target_items_in_page, NULL) &&
+            target_items_in_page > 0) {
+            uint16_t target_index = target_page_start_index + relative_index;
+            if (relative_index >= target_items_in_page) {
+                target_index = target_page_start_index + target_items_in_page - 1;
+            }
+
+            MenuItem* target_item = get_child_at_index(menu_ctx.current_menu_id, target_index);
+            if (target_item != NULL) {
+                menu_ctx.current_item_id = target_item->id;
+                update_page_info();
+                menu_ctx.need_redraw = true;
+            }
+        }
+    }
+}
+
+// 向后翻页（右键）
+static void handle_page_down(void) {
+    uint16_t current_index;
+    uint16_t target_page_start_index = 0;
+    uint8_t target_items_in_page = 0;
+    uint16_t relative_index;
+
+    if (menu_ctx.is_editing) {
+        // 编辑模式下保持原有功能
+        handle_edit_increase();
+        return;
+    }
+
+    if (menu_ctx.current_page < menu_ctx.total_pages) {
+        current_index = get_child_index(menu_ctx.current_menu_id, menu_ctx.current_item_id);
+        if (current_index == UINT16_MAX) {
+            return;
+        }
+
+        relative_index = current_index - menu_ctx.page_start_index;
+
+        if (get_page_bounds_by_number(menu_ctx.current_menu_id, menu_ctx.current_page + 1,
+                                      &target_page_start_index, &target_items_in_page, NULL) &&
+            target_items_in_page > 0) {
+            uint16_t target_index = target_page_start_index + relative_index;
+            if (relative_index >= target_items_in_page) {
+                target_index = target_page_start_index + target_items_in_page - 1;
+            }
+
+            MenuItem* target_item = get_child_at_index(menu_ctx.current_menu_id, target_index);
+            if (target_item != NULL) {
+                menu_ctx.current_item_id = target_item->id;
+                update_page_info();
+                menu_ctx.need_redraw = true;
+            }
+        }
+    }
+}
+
+// 渲染页码信息（在底部状态栏显示）
+static void render_page_info(void) {
+    // 只有在多页时才显示页码信息
+    if (menu_ctx.total_pages > 1) {
+        uint8_t y_pos = JLXLCD_H - default_layout.footer_height;
+        char page_str[16];
+        uint16_t page_width;
+        uint16_t x_pos;
+
+        snprintf(page_str, sizeof(page_str), "(%d/%d)", menu_ctx.current_page,
+                 menu_ctx.total_pages);
+
+        page_width = menu_calculate_text_width(page_str);
+        x_pos = (page_width + 2 < JLXLCD_W) ? (JLXLCD_W - page_width - 2) : 0;
+
+        // 在底部状态栏右侧显示页码
+        JLX_ShowStringAnyRow(x_pos, y_pos + 4, page_str, default_layout.font_size, 0);
+    }
 }

@@ -120,13 +120,20 @@ typedef struct {
     uint16_t scroll_position;  // 滚动位置（显示起始项索引）
     uint8_t visible_items;     // 可视项数量（根据屏幕计算）
 
+    // 翻页相关（新增）
+    uint8_t current_page;           // 当前页码（1-based）
+    uint8_t total_pages;            // 总页数
+    uint8_t items_in_current_page;  // 当前页实际包含的项数（动态计算）
+    uint16_t page_start_index;      // 当前页第一个项的全局索引
+
     // 编辑状态
     bool is_editing;        // 是否处于编辑模式
     uint16_t edit_item_id;  // 正在编辑的项ID
 
     // 历史记录栈（支持后退）
-    uint16_t history_stack[8];  // 历史菜单栈
-    uint8_t history_top;        // 栈顶指针
+    uint16_t history_stack[8];           // 历史菜单栈
+    uint16_t history_item_stack[8];      // 进入子菜单前的选中项栈
+    uint8_t history_top;                 // 栈顶指针
 
     // 显示缓存
     bool need_redraw;           // 需要重绘标志
