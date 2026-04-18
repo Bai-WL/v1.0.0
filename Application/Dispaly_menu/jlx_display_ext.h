@@ -25,7 +25,7 @@
  * @brief 初始化显示扩展库
  * @param frame_buffer 帧缓冲区地址（大小为192*16字节）
  */
-void JLX_DisplayExt_Init(char* frame_buffer);
+void JLX_DisplayExt_Init(char** frame_buffer);
 
 /**
  * @brief 清除矩形区域（像素级高度）

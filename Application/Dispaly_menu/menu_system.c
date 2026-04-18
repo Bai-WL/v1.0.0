@@ -270,7 +270,7 @@ static void render_menu_item_internal(uint8_t index, MenuItem* item, bool is_sel
     uint8_t y_pos = default_layout.menu_area_top + (index * default_layout.item_height);
 
     // 清除区域（清除整个菜单项区域）
-    JLX_ClearRectPixel(0,  y_pos,JLXLCD_W, default_layout.item_height, 0);
+    JLX_ClearRectPixel(0, y_pos, JLXLCD_W, default_layout.item_height, 0);
 
     // 绘制选择指示器
     if (is_selected) {
@@ -436,7 +436,6 @@ static void render_header_internal(void) {
         const char* title = get_string(current_menu->text_id);
         if (title != NULL) {
             JLX_ShowStringAnyRow(2, 2, title, default_layout.font_size, 0);
-            bsp_JLXLcdRefreshScreen();  // 刷新屏幕显示
         }
     }
 
@@ -465,12 +464,12 @@ static void render_footer_internal(void) {
     if (menu_ctx.is_editing) {
         JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:调整 左/右:快速调整", default_layout.font_size,
                              0);
-        JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos + 4, "确认:√ 取消:X", default_layout.font_size,
-                             0);
+        // JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos + 4, "确认:√ 取消:X", default_layout.font_size,
+        //                      0);
     } else {
         JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择 左/右:翻页", default_layout.font_size, 0);
-        JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos + 4, "确认:→ 返回:←", default_layout.font_size,
-                             0);
+        // JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos + 4, "确认:→ 返回:←", default_layout.font_size,
+        //                      0);
     }
 }
 
@@ -763,9 +762,6 @@ void menu_system_init(void) {
     menu_ctx.visible_items = VISIBLE_ITEMS;
     menu_ctx.current_state = MENU_STATE_IDLE;
     menu_ctx.need_redraw = true;
-
-    // 初始化显示驱动
-    bsp_JLXLcdInit();
 }
 
 // 加载菜单配置
@@ -924,6 +920,7 @@ void menu_handle_timer(uint32_t current_tick) {
         render_full();
         menu_ctx.need_redraw = false;
         menu_ctx.last_redraw_time = current_tick;
+        bsp_JLXLcdRefreshScreen();  // 刷新屏幕显示
     }
 }
 

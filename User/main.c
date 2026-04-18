@@ -48,9 +48,9 @@ int main(void) {
         if (current_tick - last_100ms_tick >= 100) {
             last_100ms_tick = current_tick;
             menu_handle_timer(last_100ms_tick);
-            bsp_JLXLcdRefreshScreen();  // 刷新屏幕显示
         }
         // 有线通讯状态机
+        
         MBController_Process(&hMBMaster);
         // 电源管理状态机
         pm_handler();
