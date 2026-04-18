@@ -57,24 +57,6 @@ static MenuContext menu_ctx = {.current_menu_id = 0,
                                .last_redraw_time = 0,
                                .current_state = MENU_STATE_IDLE};
 
-// 按键映射配置（默认映射）
-static FunKeyMapping key_mapping[6] = {
-    FUNKEY_UP,     // F1
-    FUNKEY_DOWN,   // F2
-    FUNKEY_LEFT,   // F3
-    FUNKEY_RIGHT,  // F4
-    FUNKEY_ENTER,  // F5
-    FUNKEY_ESC     // F6
-};
-
-// 默认按键配置
-static KeyConfig default_key_config = {
-    .debounce_time = 20,      // 20ms消抖
-    .long_press_time = 1000,  // 1秒长按
-    .repeat_delay = 500,      // 长按500ms后开始重复
-    .repeat_interval = 100    // 每100ms重复一次
-};
-
 // 自定义渲染回调
 static RenderCallback custom_render_callback = NULL;
 
@@ -874,42 +856,41 @@ MenuState menu_get_current_state(void) {
 }
 
 // 处理按键事件
-void menu_handle_key_event(FunKeyMapping key, KeyEventType event_type) {
-    if (event_type != KEY_EVENT_PRESS) {
-        return;  // 目前只处理短按事件
-    }
+void menu_handle_key_event(void) {
+    KeyEvent event;
+    while (key_control_get_event(&event)) {
+        switch (event.key) {
+        case FUNKEY_UP:
+            handle_move_up();
+            break;
 
-    switch (key) {
-    case FUNKEY_UP:
-        handle_move_up();
-        break;
+        case FUNKEY_DOWN:
+            handle_move_down();
+            break;
 
-    case FUNKEY_DOWN:
-        handle_move_down();
-        break;
+        case FUNKEY_ENTER:
+            handle_select_item();
+            break;
 
-    case FUNKEY_ENTER:
-        handle_select_item();
-        break;
+        case FUNKEY_ESC:
+            handle_back();
+            break;
 
-    case FUNKEY_ESC:
-        handle_back();
-        break;
+        case FUNKEY_LEFT:
+            if (menu_ctx.is_editing) {
+                handle_edit_decrease();
+            }
+            break;
 
-    case FUNKEY_LEFT:
-        if (menu_ctx.is_editing) {
-            handle_edit_decrease();
+        case FUNKEY_RIGHT:
+            if (menu_ctx.is_editing) {
+                handle_edit_increase();
+            }
+            break;
+
+        default:
+            break;
         }
-        break;
-
-    case FUNKEY_RIGHT:
-        if (menu_ctx.is_editing) {
-            handle_edit_increase();
-        }
-        break;
-
-    default:
-        break;
     }
 }
 
@@ -921,13 +902,6 @@ void menu_handle_timer(uint32_t current_tick) {
         menu_ctx.need_redraw = false;
         menu_ctx.last_redraw_time = current_tick;
         bsp_JLXLcdRefreshScreen();  // 刷新屏幕显示
-    }
-}
-
-// 设置按键配置
-void menu_set_key_config(const KeyConfig* config) {
-    if (config != NULL) {
-        default_key_config = *config;
     }
 }
 
@@ -981,15 +955,6 @@ void menu_show_loading(StringID message_id) {
 void menu_hide_loading(void) {
     menu_ctx.current_state = MENU_STATE_BROWSING;
     menu_ctx.need_redraw = true;
-}
-
-// 设置自定义按键映射
-void menu_set_key_mapping(const FunKeyMapping* mapping) {
-    if (mapping != NULL) {
-        for (int i = 0; i < 6; i++) {
-            key_mapping[i] = mapping[i];
-        }
-    }
 }
 
 // 获取当前布局配置

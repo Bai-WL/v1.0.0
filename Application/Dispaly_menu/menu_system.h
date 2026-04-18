@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "key_control.h"
 #include "language_resources.h"
 
 #pragma anon_unions
@@ -25,24 +26,6 @@ typedef enum {
     MENU_ITEM_TYPE_INFO,      // 只读信息
     MENU_ITEM_TYPE_SEPARATOR  // 分隔线
 } MenuItemTypes;
-
-// 功能键映射枚举
-typedef enum {
-    FUNKEY_UP = 1,     // F1键 - 上
-    FUNKEY_DOWN = 2,   // F2键 - 下
-    FUNKEY_LEFT = 3,   // F3键 - 左/翻页
-    FUNKEY_RIGHT = 4,  // F4键 - 右/翻页
-    FUNKEY_ENTER = 5,  // F5键 - 确认/进入
-    FUNKEY_ESC = 6     // F6键 - 取消/返回
-} FunKeyMapping;
-
-// 按键事件类型
-typedef enum {
-    KEY_EVENT_NONE = 0,    // 无事件
-    KEY_EVENT_PRESS,       // 短按
-    KEY_EVENT_LONG_PRESS,  // 长按
-    KEY_EVENT_REPEAT       // 重复按键（长按后）
-} KeyEventType;
 
 // 菜单状态枚举
 typedef enum {
@@ -130,13 +113,6 @@ typedef struct MenuItem {
     } data;
 } MenuItem;
 
-// 按键事件结构
-typedef struct {
-    KeyEventType type;   // 事件类型
-    FunKeyMapping key;   // 按键
-    uint32_t timestamp;  // 时间戳
-} InputEvent;
-
 // 菜单上下文
 typedef struct {
     uint16_t current_menu_id;  // 当前菜单ID
@@ -160,16 +136,8 @@ typedef struct {
     MenuState current_state;  // 当前菜单状态
 } MenuContext;
 
-// 按键配置
-typedef struct {
-    uint32_t debounce_time;    // 消抖时间（ms）
-    uint32_t long_press_time;  // 长按时间（ms）
-    uint32_t repeat_delay;     // 重复触发延迟（ms）
-    uint32_t repeat_interval;  // 重复触发间隔（ms）
-} KeyConfig;
-
 // 事件处理函数类型
-typedef void (*EventHandler)(MenuContext* ctx, InputEvent* event);
+typedef void (*EventHandler)(MenuContext* ctx, KeyEvent* event);
 
 // 渲染回调函数类型
 typedef void (*RenderCallback)(MenuItem* item, uint8_t index, bool is_selected, bool is_editing);
@@ -196,9 +164,8 @@ uint16_t menu_get_selected_item_id(void);
 MenuState menu_get_current_state(void);
 
 // 输入处理API
-void menu_handle_key_event(FunKeyMapping key, KeyEventType event_type);
+void menu_handle_key_event(void);
 void menu_handle_timer(uint32_t current_tick);
-void menu_set_key_config(const KeyConfig* config);
 
 // 显示API
 void menu_request_redraw(void);
@@ -208,12 +175,10 @@ void menu_set_custom_render_callback(RenderCallback callback);
 
 // 工具API
 void menu_show_message(StringID title_id, StringID message_id, uint32_t timeout_ms);
-void menu_show_confirm(StringID title_id, StringID message_id, ConfirmCallback confirm_cb, ConfirmCallback cancel_cb);
+void menu_show_confirm(StringID title_id, StringID message_id, ConfirmCallback confirm_cb,
+                       ConfirmCallback cancel_cb);
 void menu_show_loading(StringID message_id);
 void menu_hide_loading(void);
-
-// 按键映射API
-void menu_set_key_mapping(const FunKeyMapping* mapping);
 
 // 布局计算辅助函数
 uint16_t menu_calculate_text_width(const char* text);
@@ -224,6 +189,10 @@ bool menu_needs_wrapping(const char* text, uint16_t max_width);
 // 获取当前布局配置
 const ScreenLayout* menu_get_default_layout(void);
 
+// funkey与菜单系统集成的接口
+void key_menu_loop(uint32_t current_tick);
+
+// 测试函数
 void test_menu_navigation(void);
 
 #endif  // MENU_SYSTEM_H

@@ -6,6 +6,7 @@
 #include "bsp_modbus_tcp.h"
 #include "drv_pm.h"
 #include "gd32f30x_libopt.h"
+#include "key_control.h"
 #include "menu_system.h"
 #include "user_mb_controller.h"
 
@@ -16,6 +17,8 @@ int main(void) {
 
     // 硬件初始化
     bsp_hhctl_init();
+    // 功能模块初始化
+    key_control_init();
     test_menu_navigation();  // 测试菜单导航功能
     // 版本特定初始化
 #ifdef WIFI_H02W
@@ -36,6 +39,7 @@ int main(void) {
         if (current_tick - last_1ms_tick >= 1) {
             last_1ms_tick = current_tick;
             bsp_RunPer1ms();
+            key_menu_loop(last_1ms_tick);  // 集成按键扫描和菜单处理
         }
 
         // 10ms
@@ -50,7 +54,7 @@ int main(void) {
             menu_handle_timer(last_100ms_tick);
         }
         // 有线通讯状态机
-        
+
         MBController_Process(&hMBMaster);
         // 电源管理状态机
         pm_handler();
