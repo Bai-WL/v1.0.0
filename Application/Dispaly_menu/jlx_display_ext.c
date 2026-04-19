@@ -15,7 +15,7 @@
 #include "bsp_gd32f303xx_jlx192128g.h"
 
 // Ö¡»º³åÇøÖ¸Õë
-static char* g_frame_buffer = NULL;
+static char** g_frame_buffer = NULL;
 
 // ÆÁÄ»³ß´ç
 #define JLX_PAGE_COUNT 16  // 128ÏñËØ / 8 = 16Ò³
@@ -23,7 +23,7 @@ static char* g_frame_buffer = NULL;
 /**
  * @brief ³õÊ¼»¯ÏÔÊ¾À©Õ¹¿â
  */
-void JLX_DisplayExt_Init(char* frame_buffer) {
+void JLX_DisplayExt_Init(char** frame_buffer) {
     g_frame_buffer = frame_buffer;
 }
 
@@ -84,13 +84,13 @@ void JLX_ClearRectPixel(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
 
             if (color == 0x00)  // °×É« - Çå³ıÏñËØ
             {
-                g_frame_buffer[buffer_index] &= ~clear_mask;
+                (*g_frame_buffer)[buffer_index] &= ~clear_mask;
             } else if (color == 0x01)  // ºÚÉ« - ÉèÖÃÏñËØ
             {
-                g_frame_buffer[buffer_index] |= clear_mask;
+                (*g_frame_buffer)[buffer_index] |= clear_mask;
             } else  // ÆäËûÑÕÉ«Öµ
             {
-                g_frame_buffer[buffer_index] = color;
+                (*g_frame_buffer)[buffer_index] = color;
             }
         }
     }
@@ -100,7 +100,6 @@ void JLX_ClearRectPixel(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
  * @brief ÏÔÊ¾Ò»¸ö13x16ÏñËØµÄºº×Ö
  */
 static void show_chn_char_13x16(uint16_t x, uint16_t y, const char* _pcStr, uint8_t mode) {
-    
     uint32_t index = ulCHNHashMapGetIdx(*((uint16_t*)_pcStr));
 
     uint16_t chn_count = usCNCntGet_13x16();
@@ -127,15 +126,15 @@ static void show_chn_char_13x16(uint16_t x, uint16_t y, const char* _pcStr, uint
 
             if (start_offset) {
                 // ¿çÒ³´¦Àí
-                g_frame_buffer[buffer_index] |= pixel_data >> start_offset;
+                (*g_frame_buffer)[buffer_index] |= pixel_data >> start_offset;
 
                 if (start_page + i + 1 < JLX_PAGE_COUNT) {
                     uint32_t next_buffer_index = (start_page + i + 1) * JLXLCD_EXT_W + x + j;
-                    g_frame_buffer[next_buffer_index] |=
+                    (*g_frame_buffer)[next_buffer_index] |=
                         (uint8_t)(pixel_data << (8 - start_offset));
                 }
             } else {
-                g_frame_buffer[buffer_index] |= pixel_data;
+                (*g_frame_buffer)[buffer_index] |= pixel_data;
             }
         }
     }
@@ -148,8 +147,8 @@ static void show_eng_char_7x16(uint16_t x, uint16_t y, uint8_t ascii_char, uint8
     if (ascii_char < ' ' || ascii_char > '~') return;
 
     uint8_t ascii_index = ascii_char - ' ';
-    uint16_t start_page = y / 8;
-    uint8_t start_offset = y % 8;
+    uint16_t start_page = (y + 2) / 8;  // Ó¢ÎÄ×Ö·û¶¥²¿ÓĞ2ÏñËØ¿Õ°×
+    uint8_t start_offset = (y + 2) % 8;
     uint8_t i, j;
 
     for (i = 0; i < 2; i++)  // 2ĞĞ£¬Ã¿ĞĞ8ÏñËØ
@@ -168,15 +167,15 @@ static void show_eng_char_7x16(uint16_t x, uint16_t y, uint8_t ascii_char, uint8
 
             if (start_offset) {
                 // ¿çÒ³´¦Àí
-                g_frame_buffer[buffer_index] |= pixel_data >> start_offset;
+                (*g_frame_buffer)[buffer_index] |= pixel_data >> start_offset;
 
                 if (start_page + i + 1 < JLX_PAGE_COUNT) {
                     uint32_t next_buffer_index = (start_page + i + 1) * JLXLCD_EXT_W + x + j;
-                    g_frame_buffer[next_buffer_index] |=
+                    (*g_frame_buffer)[next_buffer_index] |=
                         (uint8_t)(pixel_data << (8 - start_offset));
                 }
             } else {
-                g_frame_buffer[buffer_index] |= pixel_data;
+                (*g_frame_buffer)[buffer_index] |= pixel_data;
             }
         }
     }

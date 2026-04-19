@@ -179,7 +179,7 @@ void bsp_JLXLcdInit(void)
     vLcdSetCursor(0, 0, 192, 16); /* 进行一次窗口配置 */
     bsp_JLXLcdClearScreen(0x00);
     bsp_JLXLcdRefreshScreen();
-    JLX_DisplayExt_Init(frame_buffer);
+    JLX_DisplayExt_Init(&frame_buffer);
 #endif
 }
 
@@ -461,14 +461,14 @@ void bsp_JLXLcdRefreshScreen(void)
 
     dma_channel_disable(DMA0, DMA_CH2);
     dma_memory_address_config(DMA0, DMA_CH2, (uint32_t)frame_buffer);
-//    if (frame_buffer == frame_buffer_0)
-//    {
-//        frame_buffer = frame_buffer_1;
-//    }
-//    else
-//    {
-//        frame_buffer = frame_buffer_0;
-//    }
+    if (frame_buffer == frame_buffer_0)
+    {
+        frame_buffer = frame_buffer_1;
+    }
+    else
+    {
+        frame_buffer = frame_buffer_0;
+    }
     dma_transfer_number_config(DMA0, DMA_CH2, 192 * 16);
     JLX_SPI_RS(1);
     JLX_SPI_CS(0); // 片选，必须在传输开始之前片选，否则影响屏幕显示
