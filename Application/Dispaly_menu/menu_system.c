@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "bsp_gd32f303xx_jlx192128g.h"
+#include "bsp_gd32f303xx_systick.h"
 #include "jlx_display_ext.h"
 
 // ============================================================================
@@ -31,6 +32,9 @@ static const ScreenLayout default_layout = {
     .max_lines_per_item = 2  // 每个菜单项最多显示2行
 };
 
+static const int32_t value_edit_steps[] = {1, 10, 100, 1000, 10000};
+#define VALUE_EDIT_STEP_COUNT ((uint8_t)(sizeof(value_edit_steps) / sizeof(value_edit_steps[0])))
+
 // 计算可视项数量（考虑多行文本）
 #define VISIBLE_ITEMS (default_layout.menu_area_height / default_layout.item_height)  // 5??
 
@@ -53,6 +57,11 @@ static MenuContext menu_ctx = {.current_menu_id = 0,
                                .page_start_index = 0,
                                .is_editing = false,
                                .edit_item_id = 0,
+                               .edit_original_value = 0,
+                               .edit_pending_value = 0,
+                               .edit_value_step_index = 0,
+                               .edit_flash_tick = 0,
+                               .edit_flash_inverse = false,
                                .history_top = 0,
                                .need_redraw = true,
                                .last_redraw_time = 0,
@@ -87,6 +96,15 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
                                       bool is_editing);
 static void render_header_internal(void);
 static void render_footer_internal(void);
+static int32_t get_editable_item_value(const MenuItem* item);
+static int32_t get_render_value(const MenuItem* item, bool is_selected, bool is_editing);
+static bool is_value_editing_item(const MenuItem* item);
+static uint8_t get_value_step_index_by_step(int32_t step_value);
+static int32_t get_current_value_edit_step(void);
+static void switch_value_edit_step(int8_t direction);
+static void begin_edit_session(MenuItem* item);
+static void apply_pending_edit_value(MenuItem* item);
+static void update_edit_flash_state(uint32_t current_tick);
 static void handle_move_up(void);
 static void handle_move_down(void);
 static void handle_select_item(void);
@@ -543,6 +561,163 @@ static bool navigate_relative_page(int8_t page_offset) {
 // 渲染函数实现
 // ============================================================================
 
+static int32_t get_editable_item_value(const MenuItem* item) {
+    if (item == NULL) {
+        return 0;
+    }
+
+    switch (item->type) {
+    case MENU_ITEM_TYPE_TOGGLE:
+        return (item->data.toggle_value != NULL && *(item->data.toggle_value)) ? 1 : 0;
+
+    case MENU_ITEM_TYPE_VALUE:
+        return (item->data.value_ptr != NULL) ? *(item->data.value_ptr) : 0;
+
+    case MENU_ITEM_TYPE_LIST:
+        return (item->data.selection_ptr != NULL) ? *(item->data.selection_ptr) : 0;
+
+    default:
+        return 0;
+    }
+}
+
+static int32_t get_render_value(const MenuItem* item, bool is_selected, bool is_editing) {
+    if (is_selected && is_editing && item != NULL && item->id == menu_ctx.edit_item_id) {
+        return menu_ctx.edit_pending_value;
+    }
+
+    return get_editable_item_value(item);
+}
+
+static bool is_value_editing_item(const MenuItem* item) {
+    return (item != NULL && item->type == MENU_ITEM_TYPE_VALUE);
+}
+
+static uint8_t get_value_step_index_by_step(int32_t step_value) {
+    uint8_t i;
+
+    for (i = 0; i < VALUE_EDIT_STEP_COUNT; i++) {
+        if (value_edit_steps[i] == step_value) {
+            return i;
+        }
+    }
+
+    return 0;
+}
+
+static int32_t get_current_value_edit_step(void) {
+    if (menu_ctx.edit_value_step_index >= VALUE_EDIT_STEP_COUNT) {
+        return value_edit_steps[0];
+    }
+
+    return value_edit_steps[menu_ctx.edit_value_step_index];
+}
+
+static void switch_value_edit_step(int8_t direction) {
+    MenuItem* item = get_menu_item(menu_ctx.edit_item_id);
+
+    if (!is_value_editing_item(item) || direction == 0) {
+        return;
+    }
+
+    if (direction < 0) {
+        if (menu_ctx.edit_value_step_index > 0) {
+            menu_ctx.edit_value_step_index--;
+            menu_ctx.need_redraw = true;
+        }
+    } else {
+        if (menu_ctx.edit_value_step_index + 1 < VALUE_EDIT_STEP_COUNT) {
+            menu_ctx.edit_value_step_index++;
+            menu_ctx.need_redraw = true;
+        }
+    }
+}
+
+static void begin_edit_session(MenuItem* item) {
+    if (item == NULL) {
+        return;
+    }
+
+    menu_ctx.is_editing = true;
+    menu_ctx.edit_item_id = item->id;
+    menu_ctx.edit_original_value = get_editable_item_value(item);
+    menu_ctx.edit_pending_value = menu_ctx.edit_original_value;
+    menu_ctx.edit_value_step_index =
+        is_value_editing_item(item) ? get_value_step_index_by_step(item->data.step_value) : 0;
+    menu_ctx.edit_flash_tick = bsp_get_systick();
+    menu_ctx.edit_flash_inverse = true;
+    menu_ctx.current_state = MENU_STATE_EDITING;
+    menu_ctx.need_redraw = true;
+}
+
+static void apply_pending_edit_value(MenuItem* item) {
+    if (item == NULL) {
+        return;
+    }
+
+    switch (item->type) {
+    case MENU_ITEM_TYPE_TOGGLE:
+        if (item->data.toggle_value != NULL) {
+            bool new_value = (menu_ctx.edit_pending_value != 0);
+            bool old_value = *(item->data.toggle_value);
+
+            if (old_value == new_value) {
+                break;
+            }
+
+            *(item->data.toggle_value) = new_value;
+            if (item->data.toggle_changed != NULL) {
+                item->data.toggle_changed(new_value);
+            }
+        }
+        break;
+
+    case MENU_ITEM_TYPE_VALUE:
+        if (item->data.value_ptr != NULL) {
+            if (*(item->data.value_ptr) == menu_ctx.edit_pending_value) {
+                break;
+            }
+
+            *(item->data.value_ptr) = menu_ctx.edit_pending_value;
+            if (item->data.value_changed != NULL) {
+                item->data.value_changed(menu_ctx.edit_pending_value);
+            }
+        }
+        break;
+
+    case MENU_ITEM_TYPE_LIST:
+        if (item->data.selection_ptr != NULL) {
+            uint8_t new_selection = (uint8_t)menu_ctx.edit_pending_value;
+            if (*(item->data.selection_ptr) == new_selection) {
+                break;
+            }
+
+            *(item->data.selection_ptr) = new_selection;
+            if (item->data.selection_changed != NULL) {
+                item->data.selection_changed(new_selection);
+            }
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+static void update_edit_flash_state(uint32_t current_tick) {
+    bool inverse;
+
+    if (!menu_ctx.is_editing) {
+        return;
+    }
+
+    inverse = ((current_tick - menu_ctx.edit_flash_tick) % 1200U) < 600U;
+    if (inverse != menu_ctx.edit_flash_inverse) {
+        menu_ctx.edit_flash_inverse = inverse;
+        menu_ctx.need_redraw = true;
+    }
+}
+
 // 渲染菜单项（支持多行文本）
 static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_selected,
                                       bool is_editing) {
@@ -596,38 +771,44 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
     case MENU_ITEM_TYPE_SUBMENU:
         // 子菜单箭头，根据行数调整位置
         if (text_layout.line_count > 1) {
-            JLX_ShowStringAnyRow(JLXLCD_W - 16, y_pos + default_layout.line_height, ">",
-                                 default_layout.font_size, 1);
+            JLX_ShowStringAnyRow(JLXLCD_W - 16, y_pos + default_layout.line_height, "->",
+                                 default_layout.font_size, 0);
         } else {
-            JLX_ShowStringAnyRow(JLXLCD_W - 16, y_pos, ">", default_layout.font_size, 1);
+            JLX_ShowStringAnyRow(JLXLCD_W - 16, y_pos, "->", default_layout.font_size, 0);
         }
         break;
 
     case MENU_ITEM_TYPE_TOGGLE: {
         const char* toggle_text = NULL;
+        uint8_t value_mode = (is_selected && is_editing && menu_ctx.edit_flash_inverse) ? 1 : 0;
+        int32_t display_value = get_render_value(item, is_selected, is_editing);
+
         if (item->data.toggle_value != NULL) {
-            toggle_text = *(item->data.toggle_value) ? get_string(STR_YES) : get_string(STR_NO);
+            toggle_text = (display_value != 0) ? get_string(STR_YES) : get_string(STR_NO);
         }
         if (toggle_text != NULL) {
             // 根据行数调整位置
             if (text_layout.line_count > 1) {
                 JLX_ShowStringAnyRow(JLXLCD_W - 32, y_pos + default_layout.line_height, toggle_text,
-                                     default_layout.font_size, 0);
+                                     default_layout.font_size, value_mode);
             } else {
                 JLX_ShowStringAnyRow(JLXLCD_W - 32, y_pos, toggle_text, default_layout.font_size,
-                                     0);
+                                     value_mode);
             }
         }
     } break;
 
     case MENU_ITEM_TYPE_VALUE: {
         char value_str[16];
+        uint8_t value_mode = (is_selected && is_editing && menu_ctx.edit_flash_inverse) ? 1 : 0;
+        int32_t display_value = get_render_value(item, is_selected, is_editing);
+
         if (item->data.value_ptr != NULL) {
-            snprintf(value_str, sizeof(value_str), "%d", *(item->data.value_ptr));
+            snprintf(value_str, sizeof(value_str), "%d", display_value);
             // 根据行数调整位置
             if (text_layout.line_count > 1) {
                 JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos + default_layout.line_height, value_str,
-                                     default_layout.font_size, 0);
+                                     default_layout.font_size, value_mode);
 
                 if (is_selected && is_editing) {
                     // 编辑模式下高亮显示
@@ -635,7 +816,8 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
                                             32);
                 }
             } else {
-                JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos, value_str, default_layout.font_size, 0);
+                JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos, value_str, default_layout.font_size,
+                                     value_mode);
 
                 if (is_selected && is_editing) {
                     // 编辑模式下高亮显示
@@ -646,27 +828,30 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
     } break;
 
     case MENU_ITEM_TYPE_LIST: {
+        uint8_t value_mode = (is_selected && is_editing && menu_ctx.edit_flash_inverse) ? 1 : 0;
+        int32_t display_value = get_render_value(item, is_selected, is_editing);
+
         if (item->data.selection_ptr != NULL && item->data.option_ids != NULL) {
-            uint8_t selection = *(item->data.selection_ptr);
+            uint8_t selection = (uint8_t)display_value;
             if (selection < item->data.option_count) {
                 const char* selected_text = get_string(item->data.option_ids[selection]);
                 if (selected_text != NULL) {
                     // 根据行数调整位置
                     if (text_layout.line_count > 1) {
                         JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos + default_layout.line_height,
-                                             selected_text, default_layout.font_size, 0);
+                                             selected_text, default_layout.font_size, value_mode);
 
                         if (is_selected && is_editing) {
                             JLX_ShowStringAnyRow(JLXLCD_W - 16, y_pos + default_layout.line_height,
-                                                 "v", default_layout.font_size, 0);
+                                                 "v", default_layout.font_size, value_mode);
                         }
                     } else {
                         JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos, selected_text,
-                                             default_layout.font_size, 0);
+                                             default_layout.font_size, value_mode);
 
                         if (is_selected && is_editing) {
                             JLX_ShowStringAnyRow(JLXLCD_W - 16, y_pos, "v",
-                                                 default_layout.font_size, 0);
+                                                 default_layout.font_size, value_mode);
                         }
                     }
                 }
@@ -701,6 +886,7 @@ static void render_header_internal(void) {
 // 渲染底部状态栏
 static void render_footer_internal(void) {
     uint8_t y_pos = JLXLCD_H - default_layout.footer_height;
+    bool is_value_editing = false;
 
     // 清除底部状态栏区域
     JLX_ClearRectPixel(0, y_pos, JLXLCD_W, default_layout.footer_height, 0);
@@ -716,18 +902,33 @@ static void render_footer_internal(void) {
 
     // 绘制操作提示
     if (menu_ctx.is_editing) {
-        JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:调整 左/右:快速调整", default_layout.font_size,
-                             0);
+        MenuItem* edit_item = get_menu_item(menu_ctx.edit_item_id);
+        is_value_editing = is_value_editing_item(edit_item);
+
+        if (is_value_editing) {
+            char step_str[20];
+            uint16_t step_width;
+            uint16_t step_x;
+
+            JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:调整   左/右:", default_layout.font_size, 0);
+
+            snprintf(step_str, sizeof(step_str), "步长:%d", (int)get_current_value_edit_step());
+            // step_width = menu_calculate_text_width(step_str);
+            // step_x = (step_width + 2U < JLXLCD_W) ? (JLXLCD_W - step_width - 2U) : 0;
+            JLX_ShowStringAnyRow(120, y_pos + 4, step_str, default_layout.font_size, 0);
+        } else {
+            JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:调整", default_layout.font_size, 0);
+        }
         // JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos + 4, "确认:√ 取消:X", default_layout.font_size,
         //                      0);
     } else {
-        JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择 左/右:翻页", default_layout.font_size, 0);
+        JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择   左/右:翻页", default_layout.font_size, 0);
         // JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos + 4, "确认:→ 返回:←", default_layout.font_size,
         //                      0);
     }
 
     // 显示页码信息（仅在多页时显示）
-    if (menu_ctx.total_pages > 1) {
+    if (menu_ctx.total_pages > 1 && !is_value_editing) {
         render_page_info();
     }
 }
@@ -868,11 +1069,7 @@ static void handle_select_item(void) {
     case MENU_ITEM_TYPE_TOGGLE:
     case MENU_ITEM_TYPE_VALUE:
     case MENU_ITEM_TYPE_LIST:
-        // 进入编辑模式
-        menu_ctx.is_editing = true;
-        menu_ctx.edit_item_id = current->id;
-        menu_ctx.current_state = MENU_STATE_EDITING;
-        menu_ctx.need_redraw = true;
+        begin_edit_session(current);
         break;
 
     default:
@@ -904,22 +1101,22 @@ static void handle_edit_increase(void) {
     switch (item->type) {
     case MENU_ITEM_TYPE_TOGGLE:
         if (item->data.toggle_value != NULL) {
-            *(item->data.toggle_value) = !*(item->data.toggle_value);
-            if (item->data.toggle_changed != NULL) {
-                item->data.toggle_changed(*(item->data.toggle_value));
-            }
+            menu_ctx.edit_pending_value = (menu_ctx.edit_pending_value == 0) ? 1 : 0;
             menu_ctx.need_redraw = true;
         }
         break;
 
     case MENU_ITEM_TYPE_VALUE:
         if (item->data.value_ptr != NULL) {
-            int32_t new_value = *(item->data.value_ptr) + item->data.step_value;
-            if (new_value <= item->data.max_value) {
-                *(item->data.value_ptr) = new_value;
-                if (item->data.value_changed != NULL) {
-                    item->data.value_changed(new_value);
-                }
+            int32_t step = get_current_value_edit_step();
+            int32_t new_value = menu_ctx.edit_pending_value + step;
+
+            if (new_value > item->data.max_value) {
+                new_value = item->data.max_value;
+            }
+
+            if (new_value != menu_ctx.edit_pending_value) {
+                menu_ctx.edit_pending_value = new_value;
                 menu_ctx.need_redraw = true;
             }
         }
@@ -927,12 +1124,9 @@ static void handle_edit_increase(void) {
 
     case MENU_ITEM_TYPE_LIST:
         if (item->data.selection_ptr != NULL && item->data.option_count > 0) {
-            uint8_t new_selection = *(item->data.selection_ptr) + 1;
+            uint8_t new_selection = (uint8_t)menu_ctx.edit_pending_value + 1;
             if (new_selection < item->data.option_count) {
-                *(item->data.selection_ptr) = new_selection;
-                if (item->data.selection_changed != NULL) {
-                    item->data.selection_changed(new_selection);
-                }
+                menu_ctx.edit_pending_value = new_selection;
                 menu_ctx.need_redraw = true;
             }
         }
@@ -951,22 +1145,22 @@ static void handle_edit_decrease(void) {
     switch (item->type) {
     case MENU_ITEM_TYPE_TOGGLE:
         if (item->data.toggle_value != NULL) {
-            *(item->data.toggle_value) = !*(item->data.toggle_value);
-            if (item->data.toggle_changed != NULL) {
-                item->data.toggle_changed(*(item->data.toggle_value));
-            }
+            menu_ctx.edit_pending_value = (menu_ctx.edit_pending_value == 0) ? 1 : 0;
             menu_ctx.need_redraw = true;
         }
         break;
 
     case MENU_ITEM_TYPE_VALUE:
         if (item->data.value_ptr != NULL) {
-            int32_t new_value = *(item->data.value_ptr) - item->data.step_value;
-            if (new_value >= item->data.min_value) {
-                *(item->data.value_ptr) = new_value;
-                if (item->data.value_changed != NULL) {
-                    item->data.value_changed(new_value);
-                }
+            int32_t step = get_current_value_edit_step();
+            int32_t new_value = menu_ctx.edit_pending_value - step;
+
+            if (new_value < item->data.min_value) {
+                new_value = item->data.min_value;
+            }
+
+            if (new_value != menu_ctx.edit_pending_value) {
+                menu_ctx.edit_pending_value = new_value;
                 menu_ctx.need_redraw = true;
             }
         }
@@ -974,13 +1168,10 @@ static void handle_edit_decrease(void) {
 
     case MENU_ITEM_TYPE_LIST:
         if (item->data.selection_ptr != NULL && item->data.option_count > 0) {
-            uint8_t current_selection = *(item->data.selection_ptr);
+            uint8_t current_selection = (uint8_t)menu_ctx.edit_pending_value;
             if (current_selection > 0) {
                 uint8_t new_selection = current_selection - 1;
-                *(item->data.selection_ptr) = new_selection;
-                if (item->data.selection_changed != NULL) {
-                    item->data.selection_changed(new_selection);
-                }
+                menu_ctx.edit_pending_value = new_selection;
                 menu_ctx.need_redraw = true;
             }
         }
@@ -993,8 +1184,19 @@ static void handle_edit_decrease(void) {
 
 // 确认编辑
 static void handle_edit_confirm(void) {
+    MenuItem* item = get_menu_item(menu_ctx.edit_item_id);
+
+    if (item != NULL) {
+        apply_pending_edit_value(item);
+    }
+
     menu_ctx.is_editing = false;
     menu_ctx.edit_item_id = 0;
+    menu_ctx.edit_original_value = 0;
+    menu_ctx.edit_pending_value = 0;
+    menu_ctx.edit_value_step_index = 0;
+    menu_ctx.edit_flash_tick = 0;
+    menu_ctx.edit_flash_inverse = false;
     menu_ctx.current_state = MENU_STATE_BROWSING;
     menu_ctx.need_redraw = true;
 }
@@ -1003,6 +1205,11 @@ static void handle_edit_confirm(void) {
 static void handle_edit_cancel(void) {
     menu_ctx.is_editing = false;
     menu_ctx.edit_item_id = 0;
+    menu_ctx.edit_original_value = 0;
+    menu_ctx.edit_pending_value = 0;
+    menu_ctx.edit_value_step_index = 0;
+    menu_ctx.edit_flash_tick = 0;
+    menu_ctx.edit_flash_inverse = false;
     menu_ctx.current_state = MENU_STATE_BROWSING;
     menu_ctx.need_redraw = true;
 }
@@ -1019,6 +1226,8 @@ void menu_system_init(void) {
     menu_ctx.current_page = 1;
     menu_ctx.total_pages = 1;
     menu_ctx.current_state = MENU_STATE_IDLE;
+    menu_ctx.edit_value_step_index = 0;
+    menu_ctx.edit_flash_inverse = false;
     menu_ctx.need_redraw = true;
 }
 
@@ -1120,6 +1329,8 @@ void menu_handle_key_event(void) {
 
 // 处理定时器事件
 void menu_handle_timer(uint32_t current_tick) {
+    update_edit_flash_state(current_tick);
+
     // 检查是否需要重绘
     if (menu_ctx.need_redraw) {
         render_full();
@@ -1204,7 +1415,11 @@ static void handle_short_press(KeyEvent* event) {
         break;
 
     case FUNKEY_ENTER:
-        handle_select_item();
+        if (menu_ctx.is_editing) {
+            handle_edit_confirm();
+        } else {
+            handle_select_item();
+        }
         break;
 
     case FUNKEY_ESC:
@@ -1213,7 +1428,12 @@ static void handle_short_press(KeyEvent* event) {
 
     case FUNKEY_LEFT:
         if (menu_ctx.is_editing) {
-            handle_edit_decrease();
+            MenuItem* edit_item = get_menu_item(menu_ctx.edit_item_id);
+            if (is_value_editing_item(edit_item)) {
+                switch_value_edit_step(-1);
+            } else {
+                handle_edit_decrease();
+            }
         } else {
             // 浏览模式下：向前翻页
             handle_page_up();
@@ -1222,7 +1442,12 @@ static void handle_short_press(KeyEvent* event) {
 
     case FUNKEY_RIGHT:
         if (menu_ctx.is_editing) {
-            handle_edit_increase();
+            MenuItem* edit_item = get_menu_item(menu_ctx.edit_item_id);
+            if (is_value_editing_item(edit_item)) {
+                switch_value_edit_step(1);
+            } else {
+                handle_edit_increase();
+            }
         } else {
             // 浏览模式下：向后翻页
             handle_page_down();

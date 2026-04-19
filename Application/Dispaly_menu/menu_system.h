@@ -127,13 +127,18 @@ typedef struct {
     uint16_t page_start_index;      // 当前页第一个项的全局索引
 
     // 编辑状态
-    bool is_editing;        // 是否处于编辑模式
-    uint16_t edit_item_id;  // 正在编辑的项ID
+    bool is_editing;                // 是否处于编辑模式
+    uint16_t edit_item_id;          // 正在编辑的项ID
+    int32_t edit_original_value;    // 进入编辑时的原始值
+    int32_t edit_pending_value;     // 编辑中的临时值，仅确认时写回
+    uint8_t edit_value_step_index;  // VALUE编辑当前步长档位
+    uint32_t edit_flash_tick;       // 编辑态闪烁基准时间
+    bool edit_flash_inverse;        // 当前是否以反色模式显示编辑值
 
     // 历史记录栈（支持后退）
-    uint16_t history_stack[8];           // 历史菜单栈
-    uint16_t history_item_stack[8];      // 进入子菜单前的选中项栈
-    uint8_t history_top;                 // 栈顶指针
+    uint16_t history_stack[8];       // 历史菜单栈
+    uint16_t history_item_stack[8];  // 进入子菜单前的选中项栈
+    uint8_t history_top;             // 栈顶指针
 
     // 显示缓存
     bool need_redraw;           // 需要重绘标志
