@@ -87,7 +87,9 @@ void key_control_set_key_mapping(const FunKeyMapping* mapping);
 
 // 按键扫描和处理
 void key_control_scan(uint32_t current_tick);
+void key_control_scan_simple(void);
 bool key_control_get_event(KeyEvent* event);
+KeyEvent key_control_get_current_event(void);
 
 // 状态查询
 bool key_control_is_key_pressed(FunKeyMapping key);
@@ -98,7 +100,7 @@ FunKeyMapping key_map_raw_to_function(uint8_t raw_key);
 const char* key_event_type_to_string(KeyEventType type);
 const char* key_mapping_to_string(FunKeyMapping key);
 
-// 与菜单系统集成
+// 与菜单系统集成（兼容保留，事件统一通过队列分发）
 void key_control_set_menu_callback(void (*callback)(FunKeyMapping, KeyEventType));
 
 // 高级功能配置

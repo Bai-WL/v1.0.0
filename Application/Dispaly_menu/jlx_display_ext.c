@@ -147,8 +147,8 @@ static void show_eng_char_7x16(uint16_t x, uint16_t y, uint8_t ascii_char, uint8
     if (ascii_char < ' ' || ascii_char > '~') return;
 
     uint8_t ascii_index = ascii_char - ' ';
-    uint16_t start_page = y / 8;
-    uint8_t start_offset = y % 8;
+    uint16_t start_page = (y + 2) / 8;  // Ó¢ÎÄ×Ö·û¶¥²¿ÓĞ2ÏñËØ¿Õ°×
+    uint8_t start_offset = (y + 2) % 8;
     uint8_t i, j;
 
     for (i = 0; i < 2; i++)  // 2ĞĞ£¬Ã¿ĞĞ8ÏñËØ

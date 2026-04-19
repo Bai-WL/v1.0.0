@@ -63,6 +63,10 @@ static FunKeyMapping key_mapping[6] = {
     FUNKEY_ENTER,  // F6
 };
 
+// 原始按键表，索引与key_mapping、key_contexts保持一致
+static const uint8_t raw_key_table[6] = {RAW_KEY_F1, RAW_KEY_F2, RAW_KEY_F3,
+                                         RAW_KEY_F4, RAW_KEY_F5, RAW_KEY_F6};
+
 // 按键上下文数组（每个功能键一个上下文）
 static KeyContext key_contexts[6] = {0};
 
@@ -72,9 +76,6 @@ static EventQueue event_queue = {0};
 // 功能使能标志
 static bool long_press_enabled = true;
 static bool repeat_enabled = true;
-
-// 菜单系统回调函数
-static void (*menu_callback)(FunKeyMapping, KeyEventType) = NULL;
 
 // ============================================================================
 // 内部辅助函数
@@ -141,6 +142,15 @@ static bool event_queue_pop(KeyEvent* event) {
 }
 
 /**
+ * @brief 统一派发按键事件到队列
+ */
+static void dispatch_key_event(FunKeyMapping key, KeyEventType type, uint32_t current_tick) {
+    KeyEvent event = {.type = type, .key = key, .timestamp = current_tick};
+
+    event_queue_push(&event);
+}
+
+/**
  * @brief 获取原始按键值的位索引
  * @param raw_key 原始按键值
  * @return 位索引（0-5），-1表示无效按键
@@ -162,15 +172,6 @@ static int8_t get_raw_key_index(uint8_t raw_key) {
     default:
         return -1;
     }
-}
-
-/**
- * @brief 检查原始按键值是否有效
- * @param raw_key 原始按键值
- * @return true 有效，false 无效
- */
-static bool is_valid_raw_key(uint8_t raw_key) {
-    return get_raw_key_index(raw_key) >= 0;
 }
 
 /**
@@ -199,14 +200,7 @@ static void process_key_state_machine(KeyContext* ctx, uint32_t current_tick) {
 
             // 生成长按事件（如果长按功能被禁用，则生成短按事件）
             if (!long_press_enabled) {
-                KeyEvent event = {
-                    .type = KEY_EVENT_PRESS, .key = ctx->mapped_key, .timestamp = current_tick};
-                event_queue_push(&event);
-
-                // 如果启用了菜单回调，直接调用
-                if (menu_callback != NULL) {
-                    menu_callback(ctx->mapped_key, KEY_EVENT_PRESS);
-                }
+                dispatch_key_event(ctx->mapped_key, KEY_EVENT_PRESS, current_tick);
             }
         }
         break;
@@ -218,13 +212,7 @@ static void process_key_state_machine(KeyContext* ctx, uint32_t current_tick) {
             ctx->state = KEY_STATE_IDLE;
 
             if (long_press_enabled) {
-                KeyEvent event = {
-                    .type = KEY_EVENT_PRESS, .key = ctx->mapped_key, .timestamp = current_tick};
-                event_queue_push(&event);
-
-                if (menu_callback != NULL) {
-                    menu_callback(ctx->mapped_key, KEY_EVENT_PRESS);
-                }
+                dispatch_key_event(ctx->mapped_key, KEY_EVENT_PRESS, current_tick);
             }
         } else if (long_press_enabled &&
                    (current_tick - ctx->press_start_time >= key_config.long_press_time)) {
@@ -233,13 +221,7 @@ static void process_key_state_machine(KeyContext* ctx, uint32_t current_tick) {
             ctx->last_repeat_time = current_tick;
 
             // 生成长按事件
-            KeyEvent event = {
-                .type = KEY_EVENT_LONG_PRESS, .key = ctx->mapped_key, .timestamp = current_tick};
-            event_queue_push(&event);
-
-            if (menu_callback != NULL) {
-                menu_callback(ctx->mapped_key, KEY_EVENT_LONG_PRESS);
-            }
+            dispatch_key_event(ctx->mapped_key, KEY_EVENT_LONG_PRESS, current_tick);
         }
         break;
 
@@ -257,16 +239,8 @@ static void process_key_state_machine(KeyContext* ctx, uint32_t current_tick) {
 
                 if (time_since_last_repeat >= key_config.repeat_interval) {
                     // 生成重复事件
-                    KeyEvent event = {.type = KEY_EVENT_REPEAT,
-                                      .key = ctx->mapped_key,
-                                      .timestamp = current_tick};
-                    event_queue_push(&event);
-
+                    dispatch_key_event(ctx->mapped_key, KEY_EVENT_REPEAT, current_tick);
                     ctx->last_repeat_time = current_tick;
-
-                    if (menu_callback != NULL) {
-                        menu_callback(ctx->mapped_key, KEY_EVENT_REPEAT);
-                    }
                 }
             }
         }
@@ -289,18 +263,15 @@ static void process_key_state_machine(KeyContext* ctx, uint32_t current_tick) {
  * @param current_tick 当前系统滴答
  */
 static void update_key_contexts(uint8_t raw_key, uint32_t current_tick) {
-    // 遍历所有按键
-    uint8_t raw_keys[] = {RAW_KEY_F1, RAW_KEY_F2, RAW_KEY_F3, RAW_KEY_F4, RAW_KEY_F5, RAW_KEY_F6};
-
     for (int i = 0; i < 6; i++) {
         KeyContext* ctx = &key_contexts[i];
 
         // 检查该按键是否被按下
-        bool is_pressed = (raw_key == raw_keys[i]);
+        bool is_pressed = (raw_key == raw_key_table[i]);
 
         // 更新原始按键值
         if (is_pressed) {
-            ctx->raw_key_value = raw_keys[i];
+            ctx->raw_key_value = raw_key_table[i];
         } else {
             ctx->raw_key_value = 0;
         }
@@ -471,10 +442,10 @@ const char* key_mapping_to_string(FunKeyMapping key) {
 
 /**
  * @brief 设置菜单系统回调函数
- * @param callback 回调函数
+ * @param callback 保留参数，当前统一走事件队列分发，不再直接回调
  */
 void key_control_set_menu_callback(void (*callback)(FunKeyMapping, KeyEventType)) {
-    menu_callback = callback;
+    (void)callback;
 }
 
 /**
