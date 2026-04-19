@@ -7,11 +7,12 @@
 
 #include "key_control.h"
 #include "language_resources.h"
+#include "user_mb_controller.h"
 
 #pragma anon_unions
 
 // ============================================================================
-// 数据类型定义
+// 数据结构与类型定义
 // ============================================================================
 
 // 菜单项类型枚举
@@ -66,7 +67,7 @@ typedef struct {
     uint8_t total_height;  // 总高度（像素）
 } TextLayout;
 
-// 菜单项数据结构
+// 菜单项定义
 typedef struct MenuItem {
     MenuItemTypes type;        // 菜单项类型
     uint16_t id;               // 菜单项唯一ID
@@ -76,6 +77,9 @@ typedef struct MenuItem {
     uint16_t parent_id;        // 父菜单ID
     uint16_t first_child_id;   // 第一个子项ID（用于SUBMENU）
     uint16_t next_sibling_id;  // 下一个兄弟项ID
+    uint16_t rs485_addr;       // 绑定的RS485地址，0xFFFF表示未绑定
+    MenuItemType rs485_type;   // RS485数据类型
+    uint8_t rs485_width;       // 写入宽度：1/2/4字节
 
     union {
         // ACTION类型
@@ -112,6 +116,8 @@ typedef struct MenuItem {
         };
     } data;
 } MenuItem;
+
+#define MENU_RS485_ADDR_NONE 0xFFFFU
 
 // 菜单上下文
 typedef struct {
@@ -161,13 +167,13 @@ typedef void (*ConfirmCallback)(void);
 // API函数声明
 // ============================================================================
 
-// 初始化API
+// 初始化接口
 void menu_system_init(void);
 bool menu_load_config(const MenuItem* items, uint16_t item_count);
 void menu_start(uint16_t initial_menu_id);
 void menu_set_language(Language lang);
 
-// 导航API
+// 导航接口
 bool menu_navigate_to(uint16_t menu_id);
 bool menu_navigate_back(void);
 bool menu_navigate_to_root(void);
@@ -175,24 +181,24 @@ uint16_t menu_get_current_menu_id(void);
 uint16_t menu_get_selected_item_id(void);
 MenuState menu_get_current_state(void);
 
-// 输入处理API
+// 输入处理接口
 void menu_handle_key_event(void);
 void menu_handle_timer(uint32_t current_tick);
 
-// 显示API
+// 显示接口
 void menu_request_redraw(void);
 bool menu_needs_redraw(void);
 void menu_force_redraw(void);
 void menu_set_custom_render_callback(RenderCallback callback);
 
-// 工具API
+// 工具接口
 void menu_show_message(StringID title_id, StringID message_id, uint32_t timeout_ms);
 void menu_show_confirm(StringID title_id, StringID message_id, ConfirmCallback confirm_cb,
                        ConfirmCallback cancel_cb);
 void menu_show_loading(StringID message_id);
 void menu_hide_loading(void);
 
-// 布局计算辅助函数
+// 布局计算辅助函数接口
 uint16_t menu_calculate_text_width(const char* text);
 uint8_t menu_wrap_text_lines(char line1[32], char line2[32], const char* text, uint16_t max_width);
 void menu_calculate_text_layout(TextLayout* layout, const char* text, uint16_t max_width);
@@ -201,10 +207,10 @@ bool menu_needs_wrapping(const char* text, uint16_t max_width);
 // 获取当前布局配置
 const ScreenLayout* menu_get_default_layout(void);
 
-// funkey与菜单系统集成的接口
+// 按键与菜单系统集成接口
 void key_menu_loop(uint32_t current_tick);
 
-// 测试函数
+// 测试接口
 void test_menu_navigation(void);
 
 #endif  // MENU_SYSTEM_H

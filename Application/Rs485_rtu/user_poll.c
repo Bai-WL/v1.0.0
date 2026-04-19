@@ -1,18 +1,15 @@
 #include "user_poll.h"
+
 #include "poll_manager.h"
-#include <stdlib.h>
 
-void creatRS485Tast_time(uint16_t address, uint16_t *value);
+void creatRS485Tast_time(uint16_t address, uint16_t* value);
 
-// å·¥å…·å‡½æ•°ï¼šæ’å…¥æ’åº
-void sort_addresses(uint16_t *arr, int size)
-{
-    for (int i = 1; i < size; i++)
-    {
+// ¹¤¾ßº¯Êı£º²åÈëÅÅĞò
+void sort_addresses(uint16_t* arr, int size) {
+    for (int i = 1; i < size; i++) {
         uint16_t key = arr[i];
         int j = i - 1;
-        while (j >= 0 && arr[j] > key)
-        {
+        while (j >= 0 && arr[j] > key) {
             arr[j + 1] = arr[j];
             j--;
         }
@@ -20,154 +17,133 @@ void sort_addresses(uint16_t *arr, int size)
     }
 }
 
-// åˆå¹¶å…è®¸é—´éš”çš„åœ°å€å—
-int merge_with_gap(uint16_t *addr_list, int addr_count, AddrBlock *blocks)
-{
-    if (addr_count == 0)
-        return 0;
+// ºÏ²¢ÔÊĞí¼ä¸ôµÄµØÖ·¿é
+int merge_with_gap(uint16_t* addr_list, int addr_count, AddrBlock* blocks) {
+    if (addr_count == 0) return 0;
 
-    sort_addresses(addr_list, addr_count); // å…ˆæ’åºåœ°å€
+    sort_addresses(addr_list, addr_count);  // ÏÈÅÅĞòµØÖ·
 
     int block_count = 0;
     uint16_t current_start = addr_list[0];
     uint16_t current_end = addr_list[0];
 
-    for (int i = 1; i < addr_count; i++)
-    {
-        if (addr_list[i] - current_end <= MAX_MERGE_GAP)
-        {
-            current_end = addr_list[i]; // åˆå¹¶åˆ°å½“å‰å—
-        }
-        else
-        {
-            // ä¿å­˜å½“å‰å—
+    for (int i = 1; i < addr_count; i++) {
+        if (addr_list[i] - current_end <= MAX_MERGE_GAP) {
+            current_end = addr_list[i];  // ºÏ²¢µ½µ±Ç°¿é
+        } else {
+            // ±£´æµ±Ç°¿é
             blocks[block_count].start_addr = current_start;
             blocks[block_count].length = current_end - current_start + 1;
             block_count++;
-            // å¼€å§‹æ–°å—
+            // ¿ªÊ¼ĞÂ¿é
             current_start = addr_list[i];
             current_end = addr_list[i];
         }
     }
-    // ä¿å­˜æœ€åä¸€ä¸ªå—
+    // ±£´æ×îºóÒ»¸ö¿é
     blocks[block_count].start_addr = current_start;
     blocks[block_count].length = current_end - current_start + 1;
     return block_count + 1;
 }
 
-// åˆ†å‰²è¶…é•¿å—
-int split_blocks(AddrBlock *merged, int merged_count, AddrBlock *requests, MenuItemType type, MenuItemType *output_types)
-{
+// ·Ö¸î³¬³¤¿é
+int split_blocks(AddrBlock* merged, int merged_count, AddrBlock* requests, MenuItemType type,
+                 MenuItemType* output_types) {
     int req_count = 0;
-    if (!merged_count)
-        return 0;
+    if (!merged_count) return 0;
 
-    for (int i = 0; i < merged_count; i++)
-    {
+    for (int i = 0; i < merged_count; i++) {
         uint16_t start = merged[i].start_addr;
         uint16_t total_len = merged[i].length;
         uint16_t offset = 0;
 
-        while (offset < total_len)
-        {
-            uint16_t chunk_len = (total_len - offset > MAX_READ_LENGTH) ? MAX_READ_LENGTH : (total_len - offset);
+        while (offset < total_len) {
+            uint16_t chunk_len =
+                (total_len - offset > MAX_READ_LENGTH) ? MAX_READ_LENGTH : (total_len - offset);
             requests[req_count].start_addr = start + offset;
             requests[req_count].length = chunk_len;
-            output_types[req_count] = type; // æ ‡è®°ç±»å‹
+            output_types[req_count] = type;  // ±ê¼ÇÀàĞÍ
             req_count++;
             offset += chunk_len;
-            if (req_count >= MAX_REQUESTS)
-                break;
+            if (req_count >= MAX_REQUESTS) break;
         }
     }
     return req_count;
 }
 
-// ç”Ÿæˆè¯·æ±‚é˜Ÿåˆ—å…¥å£å‡½æ•°
-int generate_requests(uint16_t *addr_list, MenuItemType *type_list, int addr_count, AddrBlock *output, MenuItemType *output_types)
-{
-    // åˆ†ç¦»ä½å’Œå­—åœ°å€
+// Éú³ÉÇëÇó¶ÓÁĞÈë¿Úº¯Êı
+int generate_requests(uint16_t* addr_list, MenuItemType* type_list, int addr_count,
+                      AddrBlock* output, MenuItemType* output_types) {
+    // ·ÖÀëÎ»ºÍ×ÖµØÖ·
     uint16_t bit_addrs[MAX_ADDR_LIST_SIZE], word_addrs[MAX_ADDR_LIST_SIZE];
     int bit_count = 0, word_count = 0;
 
-    for (int i = 0; i < addr_count; i++)
-    {
-        if (type_list[i] == MENU_TYPE_VALUE_BIT)
-        {
+    for (int i = 0; i < addr_count; i++) {
+        if (type_list[i] == MENU_TYPE_VALUE_BIT) {
             bit_addrs[bit_count++] = addr_list[i];
-        }
-        else if (type_list[i] == MENU_TYPE_VALUE_INT || type_list[i] == MENU_TYPE_VALUE_UINT16)
-        {
+        } else if (type_list[i] == MENU_TYPE_VALUE_INT || type_list[i] == MENU_TYPE_VALUE_UINT16) {
             word_addrs[word_count++] = addr_list[i];
-        }
-        else if (type_list[i] == MENU_TYPE_VALUE_DINT || type_list[i] == MENU_TYPE_VALUE_UINT32)
-        {
-            word_addrs[word_count++] = addr_list[i]; // åŒå­—åœ°å€éœ€è¦+1
+        } else if (type_list[i] == MENU_TYPE_VALUE_DINT || type_list[i] == MENU_TYPE_VALUE_UINT32) {
+            word_addrs[word_count++] = addr_list[i];  // Ë«×ÖµØÖ·ĞèÒª+1
             word_addrs[word_count++] = addr_list[i] + 1;
         }
     }
-    // æ­¥éª¤1ï¼šåˆå¹¶åœ°å€å—
+    // ²½Öè1£ººÏ²¢µØÖ·¿é
     AddrBlock merged_bits[MAX_MERGED_BLOCKS];
     int merged_bit_count = merge_with_gap(bit_addrs, bit_count, merged_bits);
     AddrBlock merged_words[MAX_MERGED_BLOCKS];
     int merged_word_count = merge_with_gap(word_addrs, word_count, merged_words);
-    // æ­¥éª¤2ï¼šåˆ†å‰²è¶…é•¿å—
+    // ²½Öè2£º·Ö¸î³¬³¤¿é
     int req_count = 0;
-    req_count += split_blocks(merged_bits, merged_bit_count, output + req_count, MENU_TYPE_VALUE_BIT, output_types + req_count);
-    req_count += split_blocks(merged_words, merged_word_count, output + req_count, MENU_TYPE_VALUE_INT, output_types + req_count);
+    req_count += split_blocks(merged_bits, merged_bit_count, output + req_count,
+                              MENU_TYPE_VALUE_BIT, output_types + req_count);
+    req_count += split_blocks(merged_words, merged_word_count, output + req_count,
+                              MENU_TYPE_VALUE_INT, output_types + req_count);
     return req_count;
 }
 
-// è½®è¯¢ä»»åŠ¡è®¾ç½®
-void add_menu_polltask(void)
-{
+// ÂÖÑ¯ÈÎÎñÉèÖÃ
+void add_menu_polltask(void) {
     static enum {
         REQ_IDLE = 0,
         REQ_CREATE,
     } req_state;
 
     static AddrBlock requests[MAX_REQUESTS];
-    static MenuItemType request_types[MAX_REQUESTS]; // ä¿å­˜æ¯ä¸ªè¯·æ±‚çš„ç±»å‹
+    static MenuItemType request_types[MAX_REQUESTS];  // ±£´æÃ¿¸öÇëÇóµÄÀàĞÍ
     static uint8_t req_count = 0;
     static uint8_t new_req = 0;
     // static MB_ReqType req_type;
     MB_Request req;
 
-    switch (req_state)
-    {
-    case REQ_IDLE:
-    {
+    switch (req_state) {
+    case REQ_IDLE: {
         memset(requests, 0, sizeof(requests));
         memset(request_types, 0, sizeof(request_types));
         /// test_type = (test_type == POLL_CURRENT_PAGE)? POLL_ALWAYS : POLL_CURRENT_PAGE;
-        // æ„é€ è¯»è¯·æ±‚ï¼šå½“å‰é¡µç›¸å…³å¯„å­˜å™¨
+        // ¹¹Ôì¶ÁÇëÇó£ºµ±Ç°Ò³Ïà¹Ø¼Ä´æÆ÷
         uint16_t addresses[MAX_ADDR_LIST_SIZE];
         MenuItemType types[MAX_ADDR_LIST_SIZE];
-        uint8_t addr_count = PollManager_GetPollingAddresses(addresses, types, 200); // TODOæ­¤å¤„è·å–éœ€è¦å®Œå–„è¯¥åŠŸèƒ½
-        if (addr_count > 0)
-        {
+        uint8_t addr_count = PollManager_GetPollingAddresses(addresses, types, MAX_ADDR_LIST_SIZE);
+        if (addr_count > 0) {
             req_count = generate_requests(addresses, types, addr_count, requests, request_types);
-        }
-        else
-        {
+        } else {
             return;
         }
         req_state = REQ_CREATE;
         break;
     }
-    case REQ_CREATE:
-    {
-        // æ„é€ è¯»è¯·æ±‚
-        while (new_req < req_count)
-        {
-            req.type = (request_types[new_req] == MENU_TYPE_VALUE_INT) ? REQ_READ_HOLDING_REGISTERS : REQ_READ_COILS;
+    case REQ_CREATE: {
+        // ¹¹Ôì¶ÁÇëÇó
+        while (new_req < req_count) {
+            req.type = (request_types[new_req] == MENU_TYPE_VALUE_INT) ? REQ_READ_HOLDING_REGISTERS
+                                                                       : REQ_READ_COILS;
 
             req.slave_addr = SLAVE_ADDR;
             req.reg_addr = requests[new_req].start_addr;
             req.data_len = requests[new_req].length;
 
-            if (MBController_Request(req) == REQ_ADD_FAILURE)
-            {
+            if (MBController_Request(req) == REQ_ADD_FAILURE) {
                 return;
             }
             new_req++;
@@ -184,59 +160,36 @@ void add_menu_polltask(void)
         break;
     }
 }
-void add_menu_polltask_setTime(void)
-{
-}
-void creatRS485Tast_time(uint16_t address, uint16_t *value)
-{
-}
+void add_menu_polltask_setTime(void) {}
+void creatRS485Tast_time(uint16_t address, uint16_t* value) {}
 
-void WriteValue(uint16_t addr, uint8_t width, int32_t value)
-{
+bool WriteValue(uint16_t addr, uint8_t width, int32_t value) {
     MB_Request req;
+    memset(&req, 0, sizeof(req));
     req.slave_addr = SLAVE_ADDR;
 
-    if (width == 1) // ä½è£…ç½®
+    if (width == 1)  // Î»×°ÖÃ
     {
         req.type = REQ_WRITE_SINGLE_COIL;
         req.reg_addr = addr;
         req.len_of_data = 1;
-
-        uint16_t *data = (uint16_t *)malloc(sizeof(uint16_t));
-        if (data == NULL)
-            return; // å†…å­˜åˆ†é…å¤±è´¥
-        *data = (value != 0) ? 0xFF00 : 0x0000;
-        req.data = data;
-    }
-    else if (width == 2) // 16ä½å­—
+        req.data_payload[0] = (value != 0) ? 1U : 0U;
+    } else if (width == 2)  // 16Î»×Ö
     {
         req.type = REQ_WRITE_SINGLE_REGISTER;
         req.reg_addr = addr;
         req.len_of_data = 1;
-
-        uint16_t *data = (uint16_t *)malloc(sizeof(uint16_t));
-        if (data == NULL)
-            return;
-        *data = (uint16_t)value;
-        req.data = data;
-    }
-    else if (width == 4) // 32ä½åŒå­—
+        req.data_payload[0] = (uint16_t)value;
+    } else if (width == 4)  // 32Î»Ë«×Ö
     {
         req.type = REQ_WRITE_MULTIPLE_REGISTERS;
         req.reg_addr = addr;
         req.len_of_data = 2;
-
-        uint16_t *data = (uint16_t *)malloc(2 * sizeof(uint16_t));
-        if (data == NULL)
-            return;
-        data[0] = (uint16_t)(value & 0xFFFF);
-        data[1] = (uint16_t)((value >> 16) & 0xFFFF);
-        req.data = data;
-    }
-    else
-    {
-        return;
+        req.data_payload[0] = (uint16_t)(value & 0xFFFF);
+        req.data_payload[1] = (uint16_t)((value >> 16) & 0xFFFF);
+    } else {
+        return false;
     }
 
-    MBController_Request(req);
+    return MBController_Request(req) == REQ_ADD_OK;
 }

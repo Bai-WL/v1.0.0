@@ -6,7 +6,10 @@
 
 #include "bsp_gd32f303xx_jlx192128g.h"
 #include "bsp_gd32f303xx_systick.h"
+#include "device_storage.h"
 #include "jlx_display_ext.h"
+#include "poll_manager.h"
+#include "user_poll.h"
 
 // ============================================================================
 // 内部常量定义
@@ -35,8 +38,8 @@ static const ScreenLayout default_layout = {
 static const int32_t value_edit_steps[] = {1, 10, 100, 1000, 10000};
 #define VALUE_EDIT_STEP_COUNT ((uint8_t)(sizeof(value_edit_steps) / sizeof(value_edit_steps[0])))
 
-// 计算可视项数量（考虑多行文本）
-#define VISIBLE_ITEMS (default_layout.menu_area_height / default_layout.item_height)  // 5??
+// 计算可视项数量（按默认单行高度估算）
+#define VISIBLE_ITEMS (default_layout.menu_area_height / default_layout.item_height)  // 88 / 16 = 5
 
 // ============================================================================
 // 内部全局变量
@@ -103,7 +106,7 @@ static uint8_t get_value_step_index_by_step(int32_t step_value);
 static int32_t get_current_value_edit_step(void);
 static void switch_value_edit_step(int8_t direction);
 static void begin_edit_session(MenuItem* item);
-static void apply_pending_edit_value(MenuItem* item);
+static bool apply_pending_edit_value(MenuItem* item);
 static void update_edit_flash_state(uint32_t current_tick);
 static void handle_move_up(void);
 static void handle_move_down(void);
@@ -113,13 +116,19 @@ static void handle_edit_increase(void);
 static void handle_edit_decrease(void);
 static void handle_edit_confirm(void);
 static void handle_edit_cancel(void);
+static bool menu_item_has_rs485_binding(const MenuItem* item);
+static bool menu_item_read_rs485_value(const MenuItem* item, int32_t* value);
+static void menu_item_update_shadow_value(const MenuItem* item, int32_t value);
+static void menu_register_cache_for_item(const MenuItem* item);
+static void menu_register_all_cache_items(void);
+static void menu_register_current_page_polling(uint16_t menu_id);
 
-// ????????????????
+// 按键事件内部处理函数
 static void handle_short_press(KeyEvent* event);
 static void handle_long_press(KeyEvent* event);
 static void handle_repeat_event(KeyEvent* event);
 
-// ?????????????
+// 分页相关辅助函数
 static void update_page_info(void);
 static void handle_page_up(void);
 static void handle_page_down(void);
@@ -509,6 +518,7 @@ static bool enter_menu_internal(uint16_t menu_id, bool save_history) {
     menu_ctx.current_item_id = (first_child != NULL) ? first_child->id : 0;
 
     update_page_info();
+    menu_register_current_page_polling(menu_id);
     menu_ctx.need_redraw = true;
     return true;
 }
@@ -561,9 +571,138 @@ static bool navigate_relative_page(int8_t page_offset) {
 // 渲染函数实现
 // ============================================================================
 
+static bool menu_item_has_rs485_binding(const MenuItem* item) {
+    return item != NULL && item->rs485_addr != MENU_RS485_ADDR_NONE &&
+           (item->rs485_width == 1U || item->rs485_width == 2U || item->rs485_width == 4U);
+}
+
+static bool menu_item_read_rs485_value(const MenuItem* item, int32_t* value) {
+    bool bit_value;
+    uint16_t word_value;
+    uint32_t dword_value;
+
+    if (item == NULL || value == NULL || !menu_item_has_rs485_binding(item)) {
+        return false;
+    }
+
+    if (item->rs485_width == 1U || item->rs485_type == MENU_TYPE_VALUE_BIT) {
+        if (!HashCache_GetBit(item->rs485_addr, &bit_value)) {
+            return false;
+        }
+        *value = bit_value ? 1 : 0;
+        return true;
+    }
+
+    if (item->rs485_width == 4U || item->rs485_type == MENU_TYPE_VALUE_DINT ||
+        item->rs485_type == MENU_TYPE_VALUE_UINT32) {
+        if (!HashCache_GetDWord(item->rs485_addr, &dword_value)) {
+            return false;
+        }
+        *value = (int32_t)dword_value;
+        return true;
+    }
+
+    if (!HashCache_GetWord(item->rs485_addr, &word_value)) {
+        return false;
+    }
+
+    *value = word_value;
+    return true;
+}
+
+static void menu_item_update_shadow_value(const MenuItem* item, int32_t value) {
+    if (item == NULL) {
+        return;
+    }
+
+    if (menu_item_has_rs485_binding(item)) {
+        if (item->rs485_width == 1U || item->rs485_type == MENU_TYPE_VALUE_BIT) {
+            HashCache_SetBit(item->rs485_addr, value != 0);
+        } else if (item->rs485_width == 4U || item->rs485_type == MENU_TYPE_VALUE_DINT ||
+                   item->rs485_type == MENU_TYPE_VALUE_UINT32) {
+            HashCache_SetDWord(item->rs485_addr, (uint32_t)value);
+        } else {
+            HashCache_SetWord(item->rs485_addr, (uint16_t)value);
+        }
+    }
+
+    switch (item->type) {
+    case MENU_ITEM_TYPE_TOGGLE:
+        if (item->data.toggle_value != NULL) {
+            *(item->data.toggle_value) = (value != 0);
+        }
+        break;
+
+    case MENU_ITEM_TYPE_VALUE:
+        if (item->data.value_ptr != NULL) {
+            *(item->data.value_ptr) = value;
+        }
+        break;
+
+    case MENU_ITEM_TYPE_LIST:
+        if (item->data.selection_ptr != NULL) {
+            *(item->data.selection_ptr) = (uint8_t)value;
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+static void menu_register_cache_for_item(const MenuItem* item) {
+    if (!menu_item_has_rs485_binding(item)) {
+        return;
+    }
+
+    if (item->rs485_width == 1U || item->rs485_type == MENU_TYPE_VALUE_BIT) {
+        HashCache_RegisterBit(item->rs485_addr);
+        return;
+    }
+
+    HashCache_RegisterWord(item->rs485_addr);
+    if (item->rs485_width == 4U || item->rs485_type == MENU_TYPE_VALUE_DINT ||
+        item->rs485_type == MENU_TYPE_VALUE_UINT32) {
+        HashCache_RegisterWord((uint16_t)(item->rs485_addr + 1U));
+    }
+}
+
+static void menu_register_all_cache_items(void) {
+    uint16_t i;
+
+    for (i = 0; i < menu_item_count; i++) {
+        menu_register_cache_for_item(&menu_items[i]);
+    }
+}
+
+static void menu_register_current_page_polling(uint16_t menu_id) {
+    uint16_t addrs[MAX_ADDR_PER_SCREEN];
+    MenuItemType types[MAX_ADDR_PER_SCREEN];
+    uint8_t count = 0;
+    MenuItem* child = get_first_child(menu_id);
+
+    while (child != NULL && count < MAX_ADDR_PER_SCREEN) {
+        if (menu_item_has_rs485_binding(child)) {
+            addrs[count] = child->rs485_addr;
+            types[count] = child->rs485_type;
+            count++;
+        }
+        child = get_next_sibling(child->id);
+    }
+
+    PollManager_RegisterScreenAddresses(menu_id, addrs, types, count);
+    PollManager_SetActiveScreen(menu_id);
+}
+
 static int32_t get_editable_item_value(const MenuItem* item) {
+    int32_t rs485_value;
+
     if (item == NULL) {
         return 0;
+    }
+
+    if (menu_item_read_rs485_value(item, &rs485_value)) {
+        return rs485_value;
     }
 
     switch (item->type) {
@@ -650,58 +789,70 @@ static void begin_edit_session(MenuItem* item) {
     menu_ctx.need_redraw = true;
 }
 
-static void apply_pending_edit_value(MenuItem* item) {
+static bool apply_pending_edit_value(MenuItem* item) {
+    bool changed = false;
+
     if (item == NULL) {
-        return;
+        return false;
     }
 
     switch (item->type) {
     case MENU_ITEM_TYPE_TOGGLE:
-        if (item->data.toggle_value != NULL) {
-            bool new_value = (menu_ctx.edit_pending_value != 0);
-            bool old_value = *(item->data.toggle_value);
-
-            if (old_value == new_value) {
-                break;
-            }
-
-            *(item->data.toggle_value) = new_value;
-            if (item->data.toggle_changed != NULL) {
-                item->data.toggle_changed(new_value);
-            }
+        if (menu_ctx.edit_original_value == menu_ctx.edit_pending_value) {
+            return true;
         }
+
+        if (menu_item_has_rs485_binding(item) &&
+            !WriteValue(item->rs485_addr, item->rs485_width, menu_ctx.edit_pending_value)) {
+            return false;
+        }
+
+        menu_item_update_shadow_value(item, menu_ctx.edit_pending_value);
+        if (item->data.toggle_changed != NULL) {
+            item->data.toggle_changed(menu_ctx.edit_pending_value != 0);
+        }
+        changed = true;
         break;
 
     case MENU_ITEM_TYPE_VALUE:
-        if (item->data.value_ptr != NULL) {
-            if (*(item->data.value_ptr) == menu_ctx.edit_pending_value) {
-                break;
-            }
-
-            *(item->data.value_ptr) = menu_ctx.edit_pending_value;
-            if (item->data.value_changed != NULL) {
-                item->data.value_changed(menu_ctx.edit_pending_value);
-            }
+        if (menu_ctx.edit_original_value == menu_ctx.edit_pending_value) {
+            return true;
         }
+
+        if (menu_item_has_rs485_binding(item) &&
+            !WriteValue(item->rs485_addr, item->rs485_width, menu_ctx.edit_pending_value)) {
+            return false;
+        }
+
+        menu_item_update_shadow_value(item, menu_ctx.edit_pending_value);
+        if (item->data.value_changed != NULL) {
+            item->data.value_changed(menu_ctx.edit_pending_value);
+        }
+        changed = true;
         break;
 
     case MENU_ITEM_TYPE_LIST:
-        if (item->data.selection_ptr != NULL) {
-            uint8_t new_selection = (uint8_t)menu_ctx.edit_pending_value;
-            if (*(item->data.selection_ptr) == new_selection) {
-                break;
-            }
-
-            *(item->data.selection_ptr) = new_selection;
-            if (item->data.selection_changed != NULL) {
-                item->data.selection_changed(new_selection);
-            }
+        if (menu_ctx.edit_original_value == menu_ctx.edit_pending_value) {
+            return true;
         }
+
+        if (menu_item_has_rs485_binding(item) &&
+            !WriteValue(item->rs485_addr, item->rs485_width, menu_ctx.edit_pending_value)) {
+            return false;
+        }
+
+        menu_item_update_shadow_value(item, menu_ctx.edit_pending_value);
+        if (item->data.selection_changed != NULL) {
+            item->data.selection_changed((uint8_t)menu_ctx.edit_pending_value);
+        }
+        changed = true;
         break;
 
     default:
         break;
     }
+
+    return changed || (menu_ctx.edit_original_value == menu_ctx.edit_pending_value);
 }
 
 static void update_edit_flash_state(uint32_t current_tick) {
@@ -783,9 +934,7 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
         uint8_t value_mode = (is_selected && is_editing && menu_ctx.edit_flash_inverse) ? 1 : 0;
         int32_t display_value = get_render_value(item, is_selected, is_editing);
 
-        if (item->data.toggle_value != NULL) {
-            toggle_text = (display_value != 0) ? get_string(STR_YES) : get_string(STR_NO);
-        }
+        toggle_text = (display_value != 0) ? get_string(STR_YES) : get_string(STR_NO);
         if (toggle_text != NULL) {
             // 根据行数调整位置
             if (text_layout.line_count > 1) {
@@ -803,26 +952,23 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
         uint8_t value_mode = (is_selected && is_editing && menu_ctx.edit_flash_inverse) ? 1 : 0;
         int32_t display_value = get_render_value(item, is_selected, is_editing);
 
-        if (item->data.value_ptr != NULL) {
-            snprintf(value_str, sizeof(value_str), "%d", display_value);
-            // 根据行数调整位置
-            if (text_layout.line_count > 1) {
-                JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos + default_layout.line_height, value_str,
-                                     default_layout.font_size, value_mode);
+        snprintf(value_str, sizeof(value_str), "%d", display_value);
+        // 根据行数调整位置
+        if (text_layout.line_count > 1) {
+            JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos + default_layout.line_height, value_str,
+                                 default_layout.font_size, value_mode);
 
-                if (is_selected && is_editing) {
-                    // 编辑模式下高亮显示
-                    bsp_JLXLcdShowUnderline(JLXLCD_W - 48, y_pos + default_layout.line_height + 14,
-                                            32);
-                }
-            } else {
-                JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos, value_str, default_layout.font_size,
-                                     value_mode);
+            if (is_selected && is_editing) {
+                // 编辑模式下高亮显示
+                bsp_JLXLcdShowUnderline(JLXLCD_W - 48, y_pos + default_layout.line_height + 14, 32);
+            }
+        } else {
+            JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos, value_str, default_layout.font_size,
+                                 value_mode);
 
-                if (is_selected && is_editing) {
-                    // 编辑模式下高亮显示
-                    bsp_JLXLcdShowUnderline(JLXLCD_W - 48, y_pos + 14, 32);
-                }
+            if (is_selected && is_editing) {
+                // 编辑模式下高亮显示
+                bsp_JLXLcdShowUnderline(JLXLCD_W - 48, y_pos + 14, 32);
             }
         }
     } break;
@@ -831,7 +977,7 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
         uint8_t value_mode = (is_selected && is_editing && menu_ctx.edit_flash_inverse) ? 1 : 0;
         int32_t display_value = get_render_value(item, is_selected, is_editing);
 
-        if (item->data.selection_ptr != NULL && item->data.option_ids != NULL) {
+        if (item->data.option_ids != NULL) {
             uint8_t selection = (uint8_t)display_value;
             if (selection < item->data.option_count) {
                 const char* selected_text = get_string(item->data.option_ids[selection]);
@@ -856,6 +1002,18 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
                     }
                 }
             }
+        }
+    } break;
+
+    case MENU_ITEM_TYPE_INFO: {
+        char value_str[16];
+        int32_t display_value = get_render_value(item, is_selected, is_editing);
+        snprintf(value_str, sizeof(value_str), "%d", display_value);
+        if (text_layout.line_count > 1) {
+            JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos + default_layout.line_height, value_str,
+                                 default_layout.font_size, 0);
+        } else {
+            JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos, value_str, default_layout.font_size, 0);
         }
     } break;
 
@@ -1090,6 +1248,7 @@ static void handle_back(void) {
     if (pop_history_snapshot(&previous_menu_id, &previous_item_id)) {
         menu_ctx.current_menu_id = previous_menu_id;
         select_item_and_refresh(previous_item_id);
+        menu_register_current_page_polling(previous_menu_id);
     }
 }
 
@@ -1100,30 +1259,26 @@ static void handle_edit_increase(void) {
 
     switch (item->type) {
     case MENU_ITEM_TYPE_TOGGLE:
-        if (item->data.toggle_value != NULL) {
-            menu_ctx.edit_pending_value = (menu_ctx.edit_pending_value == 0) ? 1 : 0;
+        menu_ctx.edit_pending_value = (menu_ctx.edit_pending_value == 0) ? 1 : 0;
+        menu_ctx.need_redraw = true;
+        break;
+
+    case MENU_ITEM_TYPE_VALUE: {
+        int32_t step = get_current_value_edit_step();
+        int32_t new_value = menu_ctx.edit_pending_value + step;
+
+        if (new_value > item->data.max_value) {
+            new_value = item->data.max_value;
+        }
+
+        if (new_value != menu_ctx.edit_pending_value) {
+            menu_ctx.edit_pending_value = new_value;
             menu_ctx.need_redraw = true;
         }
-        break;
-
-    case MENU_ITEM_TYPE_VALUE:
-        if (item->data.value_ptr != NULL) {
-            int32_t step = get_current_value_edit_step();
-            int32_t new_value = menu_ctx.edit_pending_value + step;
-
-            if (new_value > item->data.max_value) {
-                new_value = item->data.max_value;
-            }
-
-            if (new_value != menu_ctx.edit_pending_value) {
-                menu_ctx.edit_pending_value = new_value;
-                menu_ctx.need_redraw = true;
-            }
-        }
-        break;
+    } break;
 
     case MENU_ITEM_TYPE_LIST:
-        if (item->data.selection_ptr != NULL && item->data.option_count > 0) {
+        if (item->data.option_count > 0) {
             uint8_t new_selection = (uint8_t)menu_ctx.edit_pending_value + 1;
             if (new_selection < item->data.option_count) {
                 menu_ctx.edit_pending_value = new_selection;
@@ -1144,30 +1299,26 @@ static void handle_edit_decrease(void) {
 
     switch (item->type) {
     case MENU_ITEM_TYPE_TOGGLE:
-        if (item->data.toggle_value != NULL) {
-            menu_ctx.edit_pending_value = (menu_ctx.edit_pending_value == 0) ? 1 : 0;
+        menu_ctx.edit_pending_value = (menu_ctx.edit_pending_value == 0) ? 1 : 0;
+        menu_ctx.need_redraw = true;
+        break;
+
+    case MENU_ITEM_TYPE_VALUE: {
+        int32_t step = get_current_value_edit_step();
+        int32_t new_value = menu_ctx.edit_pending_value - step;
+
+        if (new_value < item->data.min_value) {
+            new_value = item->data.min_value;
+        }
+
+        if (new_value != menu_ctx.edit_pending_value) {
+            menu_ctx.edit_pending_value = new_value;
             menu_ctx.need_redraw = true;
         }
-        break;
-
-    case MENU_ITEM_TYPE_VALUE:
-        if (item->data.value_ptr != NULL) {
-            int32_t step = get_current_value_edit_step();
-            int32_t new_value = menu_ctx.edit_pending_value - step;
-
-            if (new_value < item->data.min_value) {
-                new_value = item->data.min_value;
-            }
-
-            if (new_value != menu_ctx.edit_pending_value) {
-                menu_ctx.edit_pending_value = new_value;
-                menu_ctx.need_redraw = true;
-            }
-        }
-        break;
+    } break;
 
     case MENU_ITEM_TYPE_LIST:
-        if (item->data.selection_ptr != NULL && item->data.option_count > 0) {
+        if (item->data.option_count > 0) {
             uint8_t current_selection = (uint8_t)menu_ctx.edit_pending_value;
             if (current_selection > 0) {
                 uint8_t new_selection = current_selection - 1;
@@ -1186,8 +1337,9 @@ static void handle_edit_decrease(void) {
 static void handle_edit_confirm(void) {
     MenuItem* item = get_menu_item(menu_ctx.edit_item_id);
 
-    if (item != NULL) {
-        apply_pending_edit_value(item);
+    if (item != NULL && !apply_pending_edit_value(item)) {
+        menu_ctx.need_redraw = true;
+        return;
     }
 
     menu_ctx.is_editing = false;
@@ -1222,6 +1374,8 @@ static void handle_edit_cancel(void) {
 void menu_system_init(void) {
     // 初始化菜单上下文
     memset(&menu_ctx, 0, sizeof(MenuContext));
+    HashCache_Init();
+    PollManager_Init();
     menu_ctx.visible_items = VISIBLE_ITEMS;
     menu_ctx.current_page = 1;
     menu_ctx.total_pages = 1;
@@ -1239,6 +1393,7 @@ bool menu_load_config(const MenuItem* items, uint16_t item_count) {
 
     menu_items = items;
     menu_item_count = item_count;
+    menu_register_all_cache_items();
     return true;
 }
 
@@ -1268,6 +1423,7 @@ bool menu_navigate_back(void) {
     if (pop_history_snapshot(&previous_menu_id, &previous_item_id)) {
         menu_ctx.current_menu_id = previous_menu_id;
         select_item_and_refresh(previous_item_id);
+        menu_register_current_page_polling(previous_menu_id);
         return true;
     }
     return false;

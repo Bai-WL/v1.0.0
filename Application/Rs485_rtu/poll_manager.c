@@ -1,104 +1,154 @@
 #include "poll_manager.h"
-#include "device_storage.h"
-#include "screen_ids.h"
+
 #include <string.h>
 
-// å¸¸é©»åœ°å€åˆ—è¡¨ï¼ˆå§‹ç»ˆè½®è¯¢ï¼Œä¾‹å¦‚æŠ¥è­¦ï¼‰
-static const uint16_t alwaysAddrs[ALWAYS_POLL_ADDR_COUNT] = {12907}; // å‡è®¾æ—¶é—´å†™å…¥åœ°å€
-static const MenuItemType alwaysTypes[ALWAYS_POLL_ADDR_COUNT] = {MENU_TYPE_VALUE_INT};
-static uint32_t alwaysLastValues[ALWAYS_POLL_ADDR_COUNT] = {0}; // å¸¸é©»åœ°å€çš„ä¸Šæ¬¡å€¼
+#include "device_storage.h"
 
-// æ¯ä¸ªç•Œé¢çš„åœ°å€åˆ—è¡¨
-typedef struct
-{
+// ³£×¤µØÖ·ÁĞ±í£¨Ê¼ÖÕÂÖÑ¯£¬ÀıÈç±¨¾¯£©
+static const uint16_t alwaysAddrs[ALWAYS_POLL_ADDR_COUNT] = {12907};  // ¼ÙÉèÊ±¼äĞ´ÈëµØÖ·
+static const MenuItemType alwaysTypes[ALWAYS_POLL_ADDR_COUNT] = {MENU_TYPE_VALUE_INT};
+static uint32_t alwaysLastValues[ALWAYS_POLL_ADDR_COUNT] = {0};  // ³£×¤µØÖ·µÄÉÏ´ÎÖµ
+
+// Ã¿¸ö½çÃæµÄµØÖ·ÁĞ±í
+typedef struct {
     uint16_t addr;
     MenuItemType type;
-    uint32_t lastValue; // ä¸Šæ¬¡å€¼ï¼ˆç”¨äºæ¯”è¾ƒæ˜¯å¦æ›´æ–°ï¼‰
+    uint32_t lastValue;  // ÉÏ´ÎÖµ£¨ÓÃÓÚ±È½ÏÊÇ·ñ¸üĞÂ£©
 } AddrEntry;
 
-typedef struct
-{
+typedef struct {
     AddrEntry entries[MAX_ADDR_PER_SCREEN];
     uint8_t count;
 } ScreenAddrList;
 
-static ScreenAddrList screenAddrs[MAX_SCREENS];
-static bool screenRegistered[MAX_SCREENS] = {false}; // æ³¨å†Œæ ‡å¿—
-static uint8_t activeScreenId = SCREEN_ID_INVALID;   // å½“å‰æ´»åŠ¨å±å¹•
+static ScreenAddrList activeScreenAddrs;
+static bool activeScreenRegistered = false;
+static uint16_t activeScreenId = HASH_CACHE_INVALID_ADDR;  // µ±Ç°»î¶¯ÆÁÄ»
 
-void PollManager_Init(void)
-{
-    for (int i = 0; i < MAX_SCREENS; i++)
-    {
-        screenAddrs[i].count = 0;
-        memset(screenAddrs[i].entries, 0, sizeof(screenAddrs[i].entries));
-        screenRegistered[i] = false;
+static void PollManager_RegisterCacheAddress(uint16_t addr, MenuItemType type) {
+    if (type == MENU_TYPE_VALUE_BIT) {
+        HashCache_RegisterBit(addr);
+    } else {
+        HashCache_RegisterWord(addr);
+        if (type == MENU_TYPE_VALUE_DINT || type == MENU_TYPE_VALUE_UINT32) {
+            HashCache_RegisterWord((uint16_t)(addr + 1U));
+        }
     }
-    activeScreenId = SCREEN_ID_INVALID;
 }
 
-// æ³¨å†Œç•Œé¢åœ°å€
-void PollManager_RegisterScreenAddresses(uint8_t screenId, const uint16_t *addrs, const MenuItemType *types, uint8_t count)
-{
-    if (screenId < MAX_SCREENS)
-    {
-        activeScreenId = screenId;
-    }
-    else
-    {
-        activeScreenId = SCREEN_ID_INVALID;
-        return;
-    }
-    if (screenRegistered[screenId])
-        return; // å·²æ³¨å†Œï¼Œè·³è¿‡
+static bool PollManager_ReadCachedValue(uint16_t addr, MenuItemType type, uint32_t* current) {
+    bool bit_value;
+    uint16_t word_value;
+    uint32_t dword_value;
 
-    if (count > MAX_ADDR_PER_SCREEN)
+    if (current == NULL) {
+        return false;
+    }
+
+    if (type == MENU_TYPE_VALUE_BIT) {
+        if (!HashCache_GetBit(addr, &bit_value)) {
+            return false;
+        }
+
+        *current = bit_value ? 1U : 0U;
+        return true;
+    }
+
+    if (type == MENU_TYPE_VALUE_DINT || type == MENU_TYPE_VALUE_UINT32) {
+        if (!HashCache_GetDWord(addr, &dword_value)) {
+            return false;
+        }
+
+        *current = dword_value;
+        return true;
+    }
+
+    if (!HashCache_GetWord(addr, &word_value)) {
+        return false;
+    }
+
+    *current = word_value;
+    return true;
+}
+
+void PollManager_Init(void) {
+    memset(&activeScreenAddrs, 0, sizeof(activeScreenAddrs));
+    activeScreenRegistered = false;
+    activeScreenId = HASH_CACHE_INVALID_ADDR;
+    for (uint8_t i = 0; i < ALWAYS_POLL_ADDR_COUNT; i++) {
+        PollManager_RegisterCacheAddress(alwaysAddrs[i], alwaysTypes[i]);
+    }
+}
+
+// ×¢²á½çÃæµØÖ·
+void PollManager_RegisterScreenAddresses(uint16_t screenId, const uint16_t* addrs,
+                                         const MenuItemType* types, uint8_t count) {
+    if (count > MAX_ADDR_PER_SCREEN) {
         count = MAX_ADDR_PER_SCREEN;
-
-    ScreenAddrList *list = &screenAddrs[screenId];
-    list->count = count;
-    for (uint8_t i = 0; i < count; i++)
-    {
-        list->entries[i].addr = addrs[i];
-        list->entries[i].type = types[i];
-        list->entries[i].lastValue = 0XFFFFFFFF;
     }
-    screenRegistered[screenId] = true; // æ ‡è®°ä¸ºå·²æ³¨å†Œ
+
+    ScreenAddrList* list = &activeScreenAddrs;
+    memset(list->entries, 0, sizeof(list->entries));
+    list->count = 0;
+    for (uint8_t i = 0; i < count; i++) {
+        bool duplicate = false;
+
+        if (addrs == NULL || types == NULL) {
+            break;
+        }
+
+        for (uint8_t j = 0; j < list->count; j++) {
+            if (list->entries[j].addr == addrs[i] && list->entries[j].type == types[i]) {
+                duplicate = true;
+                break;
+            }
+        }
+
+        if (duplicate) {
+            continue;
+        }
+
+        list->entries[list->count].addr = addrs[i];
+        list->entries[list->count].type = types[i];
+        list->entries[list->count].lastValue = 0xFFFFFFFFU;
+        PollManager_RegisterCacheAddress(addrs[i], types[i]);
+        list->count++;
+    }
+    activeScreenRegistered = true;
+    activeScreenId = screenId;
 }
 
-// è®¾ç½®å½“å‰æ´»åŠ¨å±å¹•
-void PollManager_SetActiveScreen(uint8_t screenId)
-{
-    if (screenId < MAX_SCREENS)
-    {
-        activeScreenId = screenId;
-    }
-    else
-    {
-        activeScreenId = SCREEN_ID_INVALID;
+void PollManager_UnregisterScreenAddresses(uint16_t screenId) {
+    (void)screenId;
+    memset(&activeScreenAddrs, 0, sizeof(activeScreenAddrs));
+    activeScreenRegistered = false;
+    if (activeScreenId == screenId) {
+        activeScreenId = HASH_CACHE_INVALID_ADDR;
     }
 }
 
-// è·å–è½®è¯¢åœ°å€åˆ—è¡¨ï¼ˆä¾› user_poll è°ƒç”¨ï¼‰
-uint8_t PollManager_GetPollingAddresses(uint16_t *addresses, MenuItemType *types, uint8_t maxCount)
-{
+// ÉèÖÃµ±Ç°»î¶¯ÆÁÄ»
+void PollManager_SetActiveScreen(uint16_t screenId) {
+    activeScreenId = screenId;
+}
+
+// »ñÈ¡ÂÖÑ¯µØÖ·ÁĞ±í£¨¹© user_poll µ÷ÓÃ£©
+uint8_t PollManager_GetPollingAddresses(uint16_t* addresses, MenuItemType* types,
+                                        uint8_t maxCount) {
     uint8_t idx = 0;
 
-    // 1. æ·»åŠ å½“å‰æ´»åŠ¨å±å¹•çš„åœ°å€
-    if (activeScreenId < MAX_SCREENS)
-    {
-        ScreenAddrList *list = &screenAddrs[activeScreenId];
-        for (uint8_t i = 0; i < list->count && idx < maxCount; i++)
-        {
+    // 1. Ìí¼Óµ±Ç°»î¶¯ÆÁÄ»µÄµØÖ·
+    if (activeScreenRegistered) {
+        ScreenAddrList* list = &activeScreenAddrs;
+        for (uint8_t i = 0; i < list->count && idx < maxCount; i++) {
             addresses[idx] = list->entries[i].addr;
             types[idx] = list->entries[i].type;
             idx++;
         }
     }
 
-    // 2. æ·»åŠ å¸¸é©»åœ°å€ï¼ˆå»é‡ï¼‰
-    for (uint8_t i = 0; i < ALWAYS_POLL_ADDR_COUNT && idx < maxCount; i++)
-    {
+    // 2. Ìí¼Ó³£×¤µØÖ·£¨È¥ÖØ£©
+    for (uint8_t i = 0; i < ALWAYS_POLL_ADDR_COUNT && idx < maxCount; i++) {
         // if (!isAddrAlreadyInList(alwaysAddrs[i], addresses, idx))
         // {
         addresses[idx] = alwaysAddrs[i];
@@ -110,101 +160,44 @@ uint8_t PollManager_GetPollingAddresses(uint16_t *addresses, MenuItemType *types
     return idx;
 }
 
-// æ£€æŸ¥å¹¶æ›´æ–°åœ°å€å€¼ï¼Œè¿”å›éœ€è¦é€šçŸ¥çš„åœ°å€æ•°é‡
-uint8_t PollManager_CheckAndUpdateValues(uint16_t *changedAddrs, uint32_t *changedValues)
-{
+// ¼ì²é²¢¸üĞÂµØÖ·Öµ£¬·µ»ØĞèÒªÍ¨ÖªµÄµØÖ·ÊıÁ¿
+uint8_t PollManager_CheckAndUpdateValues(uint16_t* changedAddrs, uint32_t* changedValues) {
     uint8_t changedCount = 0;
+    uint8_t screenCount = 0;
+    uint8_t count;
 
-    // è·å–å½“å‰éœ€è¦æ‰«æçš„åœ°å€åˆ—è¡¨
-    uint8_t count = screenAddrs[activeScreenId].count + ALWAYS_POLL_ADDR_COUNT;
+    if (activeScreenRegistered) {
+        screenCount = activeScreenAddrs.count;
+    }
 
-    for (uint8_t i = 0; i < count; i++)
-    {
+    count = (uint8_t)(screenCount + ALWAYS_POLL_ADDR_COUNT);
+
+    for (uint8_t i = 0; i < count; i++) {
         uint32_t current;
-        if (i < screenAddrs[activeScreenId].count)
-        {
-            if (screenAddrs[activeScreenId].entries[i].type == MENU_TYPE_VALUE_BIT)
-            {
-                current = DeviceStorage_GetBit(screenAddrs[activeScreenId].entries[i].addr) ? 1 : 0;
-            }
-            else if (screenAddrs[activeScreenId].entries[i].type == MENU_TYPE_VALUE_INT || screenAddrs[activeScreenId].entries[i].type == MENU_TYPE_VALUE_UINT16)
-            {
-                uint16_t val;
-                if (DeviceStorage_GetWord(screenAddrs[activeScreenId].entries[i].addr, &val))
-                {
-                    current = val;
-                }
-                else
-                {
-                    continue; // åœ°å€æ— æ•ˆï¼Œè·³è¿‡
-                }
-            }
-            else if (screenAddrs[activeScreenId].entries[i].type == MENU_TYPE_VALUE_DINT || screenAddrs[activeScreenId].entries[i].type == MENU_TYPE_VALUE_UINT32)
-            {
-                uint16_t low, high;
-                if (DeviceStorage_GetWord(screenAddrs[activeScreenId].entries[i].addr, &low) && DeviceStorage_GetWord(screenAddrs[activeScreenId].entries[i].addr + 1, &high))
-                {
-                    current = ((uint32_t)high << 16) | low; // å°ç«¯æ¨¡å¼
-                }
-                else
-                {
-                    continue;
-                }
-            }
-            else
-            {
+        if (i < screenCount) {
+            if (!PollManager_ReadCachedValue(activeScreenAddrs.entries[i].addr,
+                                             activeScreenAddrs.entries[i].type, &current)) {
                 continue;
             }
-            if (current != screenAddrs[activeScreenId].entries[i].lastValue)
-            {
-                // æ›´æ–°lastValue
-                screenAddrs[activeScreenId].entries[i].lastValue = current;
-                // è®°å½•å˜åŒ–çš„åœ°å€å’Œå€¼
-                changedAddrs[changedCount] = screenAddrs[activeScreenId].entries[i].addr;
+            if (current != activeScreenAddrs.entries[i].lastValue) {
+                // ¸üĞÂlastValue
+                activeScreenAddrs.entries[i].lastValue = current;
+                // ¼ÇÂ¼±ä»¯µÄµØÖ·ºÍÖµ
+                changedAddrs[changedCount] = activeScreenAddrs.entries[i].addr;
                 changedValues[changedCount] = current;
                 changedCount++;
             }
-        }
-        else
-        {
-            if (alwaysTypes[i - screenAddrs[activeScreenId].count] == MENU_TYPE_VALUE_BIT)
-            {
-                current = DeviceStorage_GetBit(alwaysAddrs[i - screenAddrs[activeScreenId].count]) ? 1 : 0;
-            }
-            else if (alwaysTypes[i - screenAddrs[activeScreenId].count] == MENU_TYPE_VALUE_INT || alwaysTypes[i - screenAddrs[activeScreenId].count] == MENU_TYPE_VALUE_UINT16)
-            {
-                uint16_t val;
-                if (DeviceStorage_GetWord(alwaysAddrs[i - screenAddrs[activeScreenId].count], &val))
-                {
-                    current = val;
-                }
-                else
-                {
-                    continue; // åœ°å€æ— æ•ˆï¼Œè·³è¿‡
-                }
-            }
-            else if (alwaysTypes[i - screenAddrs[activeScreenId].count] == MENU_TYPE_VALUE_DINT || alwaysTypes[i - screenAddrs[activeScreenId].count] == MENU_TYPE_VALUE_UINT32)
-            {
-                uint16_t low, high;
-                if (DeviceStorage_GetWord(alwaysAddrs[i - screenAddrs[activeScreenId].count], &low) && DeviceStorage_GetWord(alwaysAddrs[i - screenAddrs[activeScreenId].count] + 1, &high))
-                {
-                    current = ((uint32_t)high << 16) | low; // å°ç«¯æ¨¡å¼
-                }
-                else
-                {
-                    continue;
-                }
-            }
-            else
-            {
+        } else {
+            uint8_t alwaysIndex = (uint8_t)(i - screenCount);
+            if (!PollManager_ReadCachedValue(alwaysAddrs[alwaysIndex], alwaysTypes[alwaysIndex],
+                                             &current)) {
                 continue;
             }
-            if (current != alwaysLastValues[i - screenAddrs[activeScreenId].count])
-            {
-                // æ›´æ–°lastValue
-                alwaysLastValues[i - screenAddrs[activeScreenId].count] = current;
-                // è®°å½•å˜åŒ–çš„åœ°å€å’Œå€¼
-                changedAddrs[changedCount] = alwaysAddrs[i - screenAddrs[activeScreenId].count];
+            if (current != alwaysLastValues[alwaysIndex]) {
+                // ¸üĞÂlastValue
+                alwaysLastValues[alwaysIndex] = current;
+                // ¼ÇÂ¼±ä»¯µÄµØÖ·ºÍÖµ
+                changedAddrs[changedCount] = alwaysAddrs[alwaysIndex];
                 changedValues[changedCount] = current;
                 changedCount++;
             }
