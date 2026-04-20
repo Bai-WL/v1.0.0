@@ -772,12 +772,29 @@ static void io_monitor_close(void) {
 }
 
 static void io_monitor_move_up(void) {
+    uint8_t page_count;
+
     if (menu_ctx.io_is_editing) {
+        return;
+    }
+
+    page_count = io_monitor_get_page_count(menu_ctx.io_current_page);
+    if (page_count == 0U) {
         return;
     }
 
     if (menu_ctx.io_selected_index > 0U) {
         menu_ctx.io_selected_index--;
+        menu_ctx.need_redraw = true;
+        return;
+    }
+
+    if (menu_ctx.io_current_page > 0U) {
+        menu_ctx.io_current_page--;
+        io_monitor_sync_paging();
+
+        page_count = io_monitor_get_page_count(menu_ctx.io_current_page);
+        menu_ctx.io_selected_index = (page_count > 0U) ? (uint8_t)(page_count - 1U) : 0U;
         menu_ctx.need_redraw = true;
     }
 }
@@ -791,6 +808,14 @@ static void io_monitor_move_down(void) {
 
     if (menu_ctx.io_selected_index + 1U < page_count) {
         menu_ctx.io_selected_index++;
+        menu_ctx.need_redraw = true;
+        return;
+    }
+
+    if (menu_ctx.io_current_page + 1U < menu_ctx.io_total_pages) {
+        menu_ctx.io_current_page++;
+        io_monitor_sync_paging();
+        menu_ctx.io_selected_index = 0U;
         menu_ctx.need_redraw = true;
     }
 }
@@ -1340,7 +1365,8 @@ static void render_io_monitor_view(void) {
         const IOMonitorPoint* point;
         bool is_output = false;
         bool value = false;
-        char display_text[24];
+        char display_text_state[12];
+        char display_text_id[12];
         const char* io_name;
         uint8_t row;
         uint8_t col;
@@ -1350,7 +1376,7 @@ static void render_io_monitor_view(void) {
 
         row = (uint8_t)(slot / IO_MONITOR_COLUMNS);
         col = (uint8_t)(slot % IO_MONITOR_COLUMNS);
-        x = (uint16_t)(2U + col * 47U);
+        x = (uint16_t)(13U + col * 43U);
         y = (uint16_t)(default_layout.menu_area_top + row * 22U);
 
         point = io_monitor_get_point(menu_ctx.io_current_page, slot, &is_output);
@@ -1369,9 +1395,9 @@ static void render_io_monitor_view(void) {
             io_name = "*";
         }
 
-        snprintf(display_text, sizeof(display_text), "%s %s",
-                 (point->rs485_addr == MENU_RS485_ADDR_NONE) ? "--" : (value ? "开" : "关"),
-                 io_name);
+        snprintf(display_text_state, sizeof(display_text_state), "%s",
+                 (point->rs485_addr == MENU_RS485_ADDR_NONE) ? "--" : (value ? "开" : "关"));
+        snprintf(display_text_id, sizeof(display_text_id), "%s", io_name);
 
         if (slot == menu_ctx.io_selected_index && slot < page_count) {
             if (menu_ctx.io_is_editing && is_output) {
@@ -1381,7 +1407,8 @@ static void render_io_monitor_view(void) {
             }
         }
 
-        JLX_ShowStringAnyRow(x, y, display_text, default_layout.font_size, mode);
+        JLX_ShowStringAnyRow(x, y, display_text_state, default_layout.font_size, 0);
+        JLX_ShowStringAnyRow(x + 15, y, display_text_id, default_layout.font_size, mode);
     }
 }
 
@@ -1427,10 +1454,9 @@ static void render_footer_internal(void) {
             JLX_ShowStringAnyRow(2, y_pos + 4, "确认:切换   返回:取消", default_layout.font_size,
                                  0);
         } else if (output_page) {
-            JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择   确认:编辑", default_layout.font_size,
-                                 0);
+            JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择 确认:编辑", default_layout.font_size, 0);
         } else {
-            JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择   左/右:翻页", default_layout.font_size,
+            JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择 左/右:翻页", default_layout.font_size,
                                  0);
         }
 
