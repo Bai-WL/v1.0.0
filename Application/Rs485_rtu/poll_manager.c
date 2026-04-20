@@ -5,9 +5,9 @@
 #include "device_storage.h"
 
 // 常驻地址列表（始终轮询，例如报警）
-static const uint16_t alwaysAddrs[ALWAYS_POLL_ADDR_COUNT] = {12907};  // 假设时间写入地址
-static const MenuItemType alwaysTypes[ALWAYS_POLL_ADDR_COUNT] = {MENU_TYPE_VALUE_INT};
-static uint32_t alwaysLastValues[ALWAYS_POLL_ADDR_COUNT] = {0};  // 常驻地址的上次值
+static uint16_t alwaysAddrs[ALWAYS_POLL_ADDR_COUNT] = {HASH_CACHE_INVALID_ADDR};
+static MenuItemType alwaysTypes[ALWAYS_POLL_ADDR_COUNT] = {MENU_TYPE_VALUE_UINT16};
+static uint32_t alwaysLastValues[ALWAYS_POLL_ADDR_COUNT] = {0xFFFFFFFFU};  // 常驻地址的上次值
 
 // 每个界面的地址列表
 typedef struct {
@@ -76,7 +76,10 @@ void PollManager_Init(void) {
     activeScreenRegistered = false;
     activeScreenId = HASH_CACHE_INVALID_ADDR;
     for (uint8_t i = 0; i < ALWAYS_POLL_ADDR_COUNT; i++) {
-        PollManager_RegisterCacheAddress(alwaysAddrs[i], alwaysTypes[i]);
+        alwaysLastValues[i] = 0xFFFFFFFFU;
+        if (alwaysAddrs[i] != HASH_CACHE_INVALID_ADDR) {
+            PollManager_RegisterCacheAddress(alwaysAddrs[i], alwaysTypes[i]);
+        }
     }
 }
 
@@ -132,6 +135,16 @@ void PollManager_SetActiveScreen(uint16_t screenId) {
     activeScreenId = screenId;
 }
 
+void PollManager_SetAlarmAddress(uint16_t addr, MenuItemType type) {
+    alwaysAddrs[0] = addr;
+    alwaysTypes[0] = type;
+    alwaysLastValues[0] = 0xFFFFFFFFU;
+
+    if (addr != HASH_CACHE_INVALID_ADDR) {
+        PollManager_RegisterCacheAddress(addr, type);
+    }
+}
+
 // 获取轮询地址列表（供 user_poll 调用）
 uint8_t PollManager_GetPollingAddresses(uint16_t* addresses, MenuItemType* types,
                                         uint8_t maxCount) {
@@ -149,12 +162,12 @@ uint8_t PollManager_GetPollingAddresses(uint16_t* addresses, MenuItemType* types
 
     // 2. 添加常驻地址（去重）
     for (uint8_t i = 0; i < ALWAYS_POLL_ADDR_COUNT && idx < maxCount; i++) {
-        // if (!isAddrAlreadyInList(alwaysAddrs[i], addresses, idx))
-        // {
+        if (alwaysAddrs[i] == HASH_CACHE_INVALID_ADDR) {
+            continue;
+        }
         addresses[idx] = alwaysAddrs[i];
         types[idx] = alwaysTypes[i];
         idx++;
-        // }
     }
 
     return idx;
@@ -189,6 +202,9 @@ uint8_t PollManager_CheckAndUpdateValues(uint16_t* changedAddrs, uint32_t* chang
             }
         } else {
             uint8_t alwaysIndex = (uint8_t)(i - screenCount);
+            if (alwaysAddrs[alwaysIndex] == HASH_CACHE_INVALID_ADDR) {
+                continue;
+            }
             if (!PollManager_ReadCachedValue(alwaysAddrs[alwaysIndex], alwaysTypes[alwaysIndex],
                                              &current)) {
                 continue;

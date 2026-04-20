@@ -27,6 +27,9 @@ void PollManager_UnregisterScreenAddresses(uint16_t screenId);
 // 设置当前活动界面
 void PollManager_SetActiveScreen(uint16_t screenId);
 
+// 设置常驻报警轮询地址
+void PollManager_SetAlarmAddress(uint16_t addr, MenuItemType type);
+
 // 获取当前需要轮询的地址列表（供 user_poll 调用）
 uint8_t PollManager_GetPollingAddresses(uint16_t* addresses, MenuItemType* types, uint8_t maxCount);
 

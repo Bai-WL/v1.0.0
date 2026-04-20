@@ -6,6 +6,7 @@
 
 #include "bsp_gd32f303xx_jlx192128g.h"
 #include "bsp_gd32f303xx_systick.h"
+#include "bsp_gd32f30x_rtc.h"
 #include "device_storage.h"
 #include "jlx_display_ext.h"
 #include "poll_manager.h"
@@ -40,6 +41,23 @@ static const int32_t value_edit_steps[] = {1, 10, 100, 1000, 10000};
 
 // 计算可视项数量（按默认单行高度估算）
 #define VISIBLE_ITEMS (default_layout.menu_area_height / default_layout.item_height)  // 88 / 16 = 5
+#define IO_MONITOR_COLUMNS 4U
+#define IO_MONITOR_ROWS 4U
+#define IO_MONITOR_PAGE_SIZE (IO_MONITOR_COLUMNS * IO_MONITOR_ROWS)
+#define ALARM_LOG_MAX_ENTRIES 10U
+#define ALARM_LOG_TIME_X 16U
+#define ALARM_LOG_TEXT_X 76U
+#define ALARM_LOG_TEXT_WIDTH ((JLXLCD_W > ALARM_LOG_TEXT_X) ? (JLXLCD_W - ALARM_LOG_TEXT_X) : 0U)
+
+typedef struct {
+    bool valid;
+    uint16_t alarm_value;
+    StringID text_id;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+    bool unread;
+} AlarmLogEntry;
 
 // ============================================================================
 // 内部全局变量
@@ -48,6 +66,17 @@ static const int32_t value_edit_steps[] = {1, 10, 100, 1000, 10000};
 // 菜单配置
 static const MenuItem* menu_items = NULL;
 static uint16_t menu_item_count = 0;
+static IOMonitorConfig io_monitor_config = {0};
+static AlarmLogConfig alarm_log_config = {0U, MENU_RS485_ADDR_NONE, MENU_TYPE_VALUE_UINT16};
+static AlarmLogEntry alarm_log_entries[ALARM_LOG_MAX_ENTRIES] = {0};
+static uint8_t alarm_log_head = 0U;
+static uint8_t alarm_log_count = 0U;
+static uint8_t alarm_log_current_page = 0U;
+static uint8_t alarm_log_total_pages = 1U;
+static uint8_t alarm_log_page_start_index = 0U;
+static uint8_t alarm_log_selected_row = 0U;
+static uint32_t alarm_log_last_value = 0U;
+static bool alarm_log_has_last_value = false;
 
 // 菜单上下文
 static MenuContext menu_ctx = {.current_menu_id = 0,
@@ -68,7 +97,14 @@ static MenuContext menu_ctx = {.current_menu_id = 0,
                                .history_top = 0,
                                .need_redraw = true,
                                .last_redraw_time = 0,
-                               .current_state = MENU_STATE_IDLE};
+                               .current_state = MENU_STATE_IDLE,
+                               .special_view = MENU_SPECIAL_VIEW_NONE,
+                               .io_current_page = 0,
+                               .io_total_pages = 0,
+                               .io_selected_index = 0,
+                               .io_is_editing = false,
+                               .io_edit_flash_tick = 0,
+                               .io_edit_flash_inverse = false};
 
 // 自定义渲染回调
 static RenderCallback custom_render_callback = NULL;
@@ -122,6 +158,43 @@ static void menu_item_update_shadow_value(const MenuItem* item, int32_t value);
 static void menu_register_cache_for_item(const MenuItem* item);
 static void menu_register_all_cache_items(void);
 static void menu_register_current_page_polling(uint16_t menu_id);
+static bool io_monitor_is_configured(void);
+static uint8_t io_monitor_get_total_pages_internal(void);
+static bool io_monitor_page_is_output(uint8_t page_index);
+static uint8_t io_monitor_get_page_count(uint8_t page_index);
+static const IOMonitorPoint* io_monitor_get_point(uint8_t page_index, uint8_t slot,
+                                                  bool* is_output);
+static void io_monitor_register_all_polling(void);
+static void io_monitor_sync_paging(void);
+static void io_monitor_close(void);
+static void io_monitor_move_up(void);
+static void io_monitor_move_down(void);
+static void io_monitor_page_up(void);
+static void io_monitor_page_down(void);
+static void io_monitor_select(void);
+static void io_monitor_back(void);
+static void render_io_monitor_view(void);
+static bool alarm_log_is_configured(void);
+static StringID alarm_log_value_to_string_id(uint16_t alarm_value);
+static uint8_t alarm_log_get_entry_height(const AlarmLogEntry* entry);
+static uint8_t alarm_log_build_page(uint8_t start_index, uint16_t* page_height);
+static bool alarm_log_get_page_bounds(uint8_t page_number, uint8_t* page_start_index,
+                                      uint8_t* entries_in_page, uint8_t* total_pages);
+static uint8_t alarm_log_get_page_entry_count(uint8_t page_index);
+static AlarmLogEntry* alarm_log_get_entry_by_display_index(uint8_t display_index);
+static void alarm_log_register_polling(void);
+static void alarm_log_sync_paging(void);
+static void alarm_log_mark_all_read(void);
+static void alarm_log_append(uint16_t alarm_value);
+static bool alarm_log_open(bool save_history);
+static void alarm_log_close(void);
+static void alarm_log_move_up(void);
+static void alarm_log_move_down(void);
+static void alarm_log_page_up(void);
+static void alarm_log_page_down(void);
+static void alarm_log_select(void);
+static void alarm_log_back(void);
+static void render_alarm_log_view(void);
 
 // 按键事件内部处理函数
 static void handle_short_press(KeyEvent* event);
@@ -138,19 +211,35 @@ static void render_page_info(void);
 // 文本处理函数实现
 // ============================================================================
 
+static uint8_t menu_get_encoded_char_len(const char* text) {
+    if (text == NULL || *text == '\0') {
+        return 0U;
+    }
+
+    if ((uint8_t)*text < 128U || text[1] == '\0') {
+        return 1U;
+    }
+
+    return 2U;
+}
+
+static uint16_t menu_get_encoded_char_width(const char* text) {
+    if (text == NULL || *text == '\0') {
+        return 0U;
+    }
+
+    return ((uint8_t)*text < 128U) ? default_layout.en_char_width : default_layout.cn_char_width;
+}
+
 // 文本宽度计算辅助函数
 uint16_t menu_calculate_text_width(const char* text) {
     uint16_t width = 0;
     const char* p = text;
 
     while (*p) {
-        // 简单判断：ASCII字符（英文）用英文宽度，其他用中文宽度
-        if ((uint8_t)*p < 128) {
-            width += default_layout.en_char_width;
-        } else {
-            width += default_layout.cn_char_width;
-        }
-        p++;
+        uint8_t char_len = menu_get_encoded_char_len(p);
+        width += menu_get_encoded_char_width(p);
+        p += (char_len > 0U) ? char_len : 1U;
     }
     return width;
 }
@@ -159,75 +248,56 @@ uint16_t menu_calculate_text_width(const char* text) {
 // 返回实际使用的行数（1或2）
 uint8_t menu_wrap_text_lines(char line1[32], char line2[32], const char* text, uint16_t max_width) {
     uint16_t current_width = 0;
-    uint16_t char_count = 0;
+    uint16_t byte_count = 0;
     uint8_t line_index = 0;
-    uint16_t last_space_pos = 0;  // 最后一个空格位置
     const char* src = text;
     char* current_line = line1;
+    const uint16_t max_line_bytes = 31U;
 
     while (*src && line_index < 2) {
-        uint16_t char_width =
-            ((uint8_t)*src < 128) ? default_layout.en_char_width : default_layout.cn_char_width;
+        uint8_t char_len = menu_get_encoded_char_len(src);
+        uint16_t char_width = menu_get_encoded_char_width(src);
 
         // 检查添加当前字符后是否会超出宽度
-        if (current_width + char_width > max_width) {
+        if (current_width + char_width > max_width || byte_count + char_len > max_line_bytes) {
             // 如果已经超过一行，需要换行
             if (line_index == 0) {
-                // 第一行结束
-                if (last_space_pos > 0) {
-                    // 在最后一个空格处换行
-                    current_line[last_space_pos] = '\0';
-                    src = text + last_space_pos + 1;  // 跳过空格
-                } else {
-                    // 没有空格，在当前字符处截断
-                    current_line[char_count] = '\0';
-                }
+                current_line[byte_count] = '\0';
 
                 // 准备第二行
                 line_index = 1;
                 current_line = line2;
-                char_count = 0;
+                byte_count = 0;
                 current_width = 0;
-                last_space_pos = 0;
 
-                // 重新开始处理（src已更新）
+                // 重新开始处理当前字符
                 continue;
             } else {
-                // 已经是第二行，无法再换行，截断并添加省略号
-                if (char_count > 0) {
-                    // 回退一个字符，为省略号留出空间
-                    char_count--;
-                    current_width -= ((uint8_t)*(src - 1) < 128) ? default_layout.en_char_width
-                                                                 : default_layout.cn_char_width;
-
-                    // 添加省略号
-                    if (current_width + default_layout.en_char_width * 3 <= max_width) {
-                        current_line[char_count++] = '.';
-                        current_line[char_count++] = '.';
-                        current_line[char_count++] = '.';
-                    }
+                if (byte_count + 3U <= max_line_bytes &&
+                    current_width + default_layout.en_char_width * 3U <= max_width) {
+                    current_line[byte_count++] = '.';
+                    current_line[byte_count++] = '.';
+                    current_line[byte_count++] = '.';
                 }
+                current_line[byte_count] = '\0';
                 break;
             }
         }
 
-        // 记录空格位置，用于在单词边界换行（暂不使用）
-        // if (*src == ' ' || *src == '\t') {
-        //     last_space_pos = char_count;
-        // }
-
-        current_line[char_count++] = *src;
+        while (char_len > 0U) {
+            current_line[byte_count++] = *src++;
+            char_len--;
+        }
         current_width += char_width;
-        src++;
     }
 
     // 设置当前行结束
     if (line_index == 0) {
-        current_line[char_count] = '\0';
+        current_line[byte_count] = '\0';
         line2[0] = '\0';  // 第二行为空
         return 1;
     } else {
-        current_line[char_count] = '\0';
+        current_line[byte_count] = '\0';
         return 2;
     }
 }
@@ -513,6 +583,13 @@ static bool enter_menu_internal(uint16_t menu_id, bool save_history) {
 
     menu_ctx.current_menu_id = menu_id;
     menu_ctx.scroll_position = 0;
+    menu_ctx.special_view = MENU_SPECIAL_VIEW_NONE;
+    menu_ctx.io_current_page = 0;
+    menu_ctx.io_total_pages = 0;
+    menu_ctx.io_selected_index = 0;
+    menu_ctx.io_is_editing = false;
+    menu_ctx.io_edit_flash_tick = 0;
+    menu_ctx.io_edit_flash_inverse = false;
 
     first_child = get_first_child(menu_id);
     menu_ctx.current_item_id = (first_child != NULL) ? first_child->id : 0;
@@ -565,6 +642,721 @@ static bool navigate_relative_page(int8_t page_offset) {
     }
 
     return false;
+}
+
+static bool io_monitor_is_configured(void) {
+    return ((io_monitor_config.x_points != NULL && io_monitor_config.x_count > 0U) ||
+            (io_monitor_config.y_points != NULL && io_monitor_config.y_count > 0U));
+}
+
+static bool alarm_log_is_configured(void) {
+    return alarm_log_config.rs485_addr != MENU_RS485_ADDR_NONE;
+}
+
+static StringID alarm_log_value_to_string_id(uint16_t alarm_value) {
+    switch (alarm_value) {
+    case 1:
+        return STR_ALARM_E01;
+    case 2:
+        return STR_ALARM_E02;
+    case 3:
+        return STR_ALARM_E03;
+    case 4:
+        return STR_ALARM_E04;
+    case 5:
+        return STR_ALARM_E05;
+    case 6:
+        return STR_ALARM_E06;
+    case 7:
+        return STR_ALARM_E07;
+    case 8:
+        return STR_ALARM_E08;
+    case 9:
+        return STR_ALARM_E09;
+    case 10:
+        return STR_ALARM_E10;
+    case 11:
+        return STR_ALARM_E11;
+    case 12:
+        return STR_ALARM_E12;
+    case 13:
+        return STR_ALARM_E13;
+    case 14:
+        return STR_ALARM_E14;
+    case 15:
+        return STR_ALARM_E15;
+    case 16:
+        return STR_ALARM_E16;
+    case 17:
+        return STR_ALARM_E17;
+    case 18:
+        return STR_ALARM_E18;
+    case 19:
+        return STR_ALARM_E19;
+    case 20:
+        return STR_ALARM_E20;
+    case 21:
+        return STR_ALARM_E21;
+    case 22:
+        return STR_ALARM_E22;
+    case 23:
+        return STR_ALARM_E23;
+    case 24:
+        return STR_ALARM_E24;
+    case 25:
+        return STR_ALARM_E25;
+    case 26:
+        return STR_ALARM_E26;
+    case 27:
+        return STR_ALARM_E27;
+    case 28:
+        return STR_ALARM_E28;
+    case 29:
+        return STR_ALARM_E29;
+    case 30:
+        return STR_ALARM_E30;
+    case 31:
+        return STR_ALARM_E31;
+    case 32:
+        return STR_ALARM_E32;
+    case 35:
+        return STR_ALARM_E35;
+    case 36:
+        return STR_ALARM_E36;
+    case 37:
+        return STR_ALARM_E37;
+    case 255:
+        return STR_ALARM_E255;
+    default:
+        return STR_UNKNOWN_ERROR;
+    }
+}
+
+static uint8_t alarm_log_get_entry_height(const AlarmLogEntry* entry) {
+    TextLayout text_layout;
+    const char* alarm_text;
+
+    if (entry == NULL) {
+        return default_layout.line_height;
+    }
+
+    alarm_text = get_string(entry->text_id);
+    if (alarm_text == NULL) {
+        alarm_text = "*";
+    }
+
+    menu_calculate_text_layout(&text_layout, alarm_text, ALARM_LOG_TEXT_WIDTH);
+    if (text_layout.total_height == 0U) {
+        return default_layout.line_height;
+    }
+
+    return text_layout.total_height;
+}
+
+static uint8_t alarm_log_build_page(uint8_t start_index, uint16_t* page_height) {
+    uint16_t total_height = 0U;
+    uint8_t count = 0U;
+    uint16_t available_height;
+
+    if (alarm_log_count == 0U || start_index >= alarm_log_count) {
+        if (page_height != NULL) {
+            *page_height = 0U;
+        }
+        return 0U;
+    }
+
+    available_height =
+        (default_layout.menu_area_height > default_layout.line_height)
+            ? (uint16_t)(default_layout.menu_area_height - default_layout.line_height)
+            : default_layout.line_height;
+
+    while ((uint16_t)(start_index + count) < alarm_log_count) {
+        AlarmLogEntry* entry = alarm_log_get_entry_by_display_index((uint8_t)(start_index + count));
+        uint8_t entry_height = alarm_log_get_entry_height(entry);
+
+        if (count > 0U && (total_height + entry_height > available_height)) {
+            break;
+        }
+
+        total_height += entry_height;
+        count++;
+    }
+
+    if (page_height != NULL) {
+        *page_height = total_height;
+    }
+
+    return count;
+}
+
+static bool alarm_log_get_page_bounds(uint8_t page_number, uint8_t* page_start_index,
+                                      uint8_t* entries_in_page, uint8_t* total_pages) {
+    uint8_t current_start = 0U;
+    uint8_t current_page = 1U;
+
+    if (alarm_log_count == 0U) {
+        if (page_start_index != NULL) {
+            *page_start_index = 0U;
+        }
+        if (entries_in_page != NULL) {
+            *entries_in_page = 0U;
+        }
+        if (total_pages != NULL) {
+            *total_pages = 1U;
+        }
+        return (page_number <= 1U);
+    }
+
+    while (current_start < alarm_log_count) {
+        uint8_t page_entries = alarm_log_build_page(current_start, NULL);
+
+        if (page_entries == 0U) {
+            page_entries = 1U;
+        }
+
+        if (current_page == page_number) {
+            if (page_start_index != NULL) {
+                *page_start_index = current_start;
+            }
+            if (entries_in_page != NULL) {
+                *entries_in_page = page_entries;
+            }
+        }
+
+        current_start = (uint8_t)(current_start + page_entries);
+        current_page++;
+    }
+
+    if (total_pages != NULL) {
+        *total_pages = (uint8_t)(current_page - 1U);
+    }
+
+    return (page_number < current_page);
+}
+
+static uint8_t alarm_log_get_page_entry_count(uint8_t page_index) {
+    uint8_t page_start_index = 0U;
+    uint8_t entries_in_page = 0U;
+
+    if (!alarm_log_get_page_bounds((uint8_t)(page_index + 1U), &page_start_index, &entries_in_page,
+                                   NULL)) {
+        return 0U;
+    }
+
+    return entries_in_page;
+}
+
+static AlarmLogEntry* alarm_log_get_entry_by_display_index(uint8_t display_index) {
+    uint8_t physical_index;
+
+    if (display_index >= alarm_log_count) {
+        return NULL;
+    }
+
+    physical_index = (uint8_t)((alarm_log_head + ALARM_LOG_MAX_ENTRIES - 1U - display_index) %
+                               ALARM_LOG_MAX_ENTRIES);
+    if (!alarm_log_entries[physical_index].valid) {
+        return NULL;
+    }
+
+    return &alarm_log_entries[physical_index];
+}
+
+static void alarm_log_register_polling(void) {
+    uint16_t addr;
+    MenuItemType type;
+
+    if (!alarm_log_is_configured()) {
+        return;
+    }
+
+    addr = alarm_log_config.rs485_addr;
+    type = alarm_log_config.rs485_type;
+    PollManager_RegisterScreenAddresses(alarm_log_config.menu_id, &addr, &type, 1U);
+    PollManager_SetActiveScreen(alarm_log_config.menu_id);
+}
+
+static void alarm_log_sync_paging(void) {
+    uint8_t page_entry_count;
+    uint8_t page_start_index = 0U;
+    uint8_t total_pages = 1U;
+
+    (void)alarm_log_get_page_bounds(1U, NULL, NULL, &total_pages);
+    alarm_log_total_pages = total_pages;
+
+    if (alarm_log_current_page >= alarm_log_total_pages) {
+        alarm_log_current_page = (uint8_t)(alarm_log_total_pages - 1U);
+    }
+
+    if (!alarm_log_get_page_bounds((uint8_t)(alarm_log_current_page + 1U), &page_start_index,
+                                   &page_entry_count, &alarm_log_total_pages)) {
+        alarm_log_total_pages = 1U;
+        alarm_log_page_start_index = 0U;
+        alarm_log_selected_row = 0U;
+        return;
+    }
+
+    alarm_log_page_start_index = page_start_index;
+    if (alarm_log_selected_row > page_entry_count) {
+        alarm_log_selected_row = page_entry_count;
+    }
+}
+
+static void alarm_log_mark_all_read(void) {
+    uint8_t i;
+
+    for (i = 0U; i < ALARM_LOG_MAX_ENTRIES; i++) {
+        if (alarm_log_entries[i].valid) {
+            alarm_log_entries[i].unread = false;
+        }
+    }
+}
+
+static void alarm_log_append(uint16_t alarm_value) {
+    AlarmLogEntry* entry;
+    struct realtime_t* rtc_time;
+
+    rtc_time = bsp_RTCGetTime();
+    entry = &alarm_log_entries[alarm_log_head];
+    memset(entry, 0, sizeof(*entry));
+    entry->valid = true;
+    entry->alarm_value = alarm_value;
+    entry->text_id = alarm_log_value_to_string_id(alarm_value);
+    entry->unread = true;
+
+    if (rtc_time != NULL) {
+        entry->hour = rtc_time->hour;
+        entry->minute = rtc_time->minute;
+        entry->second = rtc_time->second;
+    }
+
+    alarm_log_head = (uint8_t)((alarm_log_head + 1U) % ALARM_LOG_MAX_ENTRIES);
+    if (alarm_log_count < ALARM_LOG_MAX_ENTRIES) {
+        alarm_log_count++;
+    }
+
+    alarm_log_current_page = 0U;
+    alarm_log_sync_paging();
+    alarm_log_selected_row = (alarm_log_get_page_entry_count(0U) > 0U) ? 1U : 0U;
+}
+
+static uint8_t io_monitor_get_total_pages_internal(void) {
+    uint8_t x_pages = 0;
+    uint8_t y_pages = 0;
+
+    if (io_monitor_config.x_count > 0U) {
+        x_pages = (uint8_t)((io_monitor_config.x_count + IO_MONITOR_PAGE_SIZE - 1U) /
+                            IO_MONITOR_PAGE_SIZE);
+    }
+    if (io_monitor_config.y_count > 0U) {
+        y_pages = (uint8_t)((io_monitor_config.y_count + IO_MONITOR_PAGE_SIZE - 1U) /
+                            IO_MONITOR_PAGE_SIZE);
+    }
+
+    return (uint8_t)(x_pages + y_pages);
+}
+
+static bool io_monitor_page_is_output(uint8_t page_index) {
+    uint8_t x_pages = 0;
+
+    if (io_monitor_config.x_count > 0U) {
+        x_pages = (uint8_t)((io_monitor_config.x_count + IO_MONITOR_PAGE_SIZE - 1U) /
+                            IO_MONITOR_PAGE_SIZE);
+    }
+
+    return (page_index >= x_pages);
+}
+
+static uint8_t io_monitor_get_page_count(uint8_t page_index) {
+    bool is_output;
+    uint8_t local_page;
+    uint8_t count;
+
+    if (!io_monitor_is_configured()) {
+        return 0;
+    }
+
+    is_output = io_monitor_page_is_output(page_index);
+    if (is_output) {
+        uint8_t x_pages = (io_monitor_config.x_count == 0U)
+                              ? 0U
+                              : (uint8_t)((io_monitor_config.x_count + IO_MONITOR_PAGE_SIZE - 1U) /
+                                          IO_MONITOR_PAGE_SIZE);
+        local_page = (uint8_t)(page_index - x_pages);
+        count = io_monitor_config.y_count;
+    } else {
+        local_page = page_index;
+        count = io_monitor_config.x_count;
+    }
+
+    if ((uint16_t)local_page * IO_MONITOR_PAGE_SIZE >= count) {
+        return 0;
+    }
+
+    count = (uint8_t)(count - ((uint8_t)(local_page * IO_MONITOR_PAGE_SIZE)));
+    if (count > IO_MONITOR_PAGE_SIZE) {
+        count = IO_MONITOR_PAGE_SIZE;
+    }
+
+    return count;
+}
+
+static const IOMonitorPoint* io_monitor_get_point(uint8_t page_index, uint8_t slot,
+                                                  bool* is_output) {
+    bool page_is_output;
+    uint8_t local_page;
+    uint16_t global_index;
+    uint8_t x_pages = 0;
+
+    if (!io_monitor_is_configured() || slot >= IO_MONITOR_PAGE_SIZE) {
+        return NULL;
+    }
+
+    if (io_monitor_config.x_count > 0U) {
+        x_pages = (uint8_t)((io_monitor_config.x_count + IO_MONITOR_PAGE_SIZE - 1U) /
+                            IO_MONITOR_PAGE_SIZE);
+    }
+
+    page_is_output = io_monitor_page_is_output(page_index);
+    if (is_output != NULL) {
+        *is_output = page_is_output;
+    }
+
+    if (page_is_output) {
+        local_page = (uint8_t)(page_index - x_pages);
+        global_index = (uint16_t)local_page * IO_MONITOR_PAGE_SIZE + slot;
+        if (global_index >= io_monitor_config.y_count) {
+            return NULL;
+        }
+        return &io_monitor_config.y_points[global_index];
+    }
+
+    local_page = page_index;
+    global_index = (uint16_t)local_page * IO_MONITOR_PAGE_SIZE + slot;
+    if (global_index >= io_monitor_config.x_count) {
+        return NULL;
+    }
+
+    return &io_monitor_config.x_points[global_index];
+}
+
+static void io_monitor_register_all_polling(void) {
+    uint16_t addrs[MAX_ADDR_PER_SCREEN];
+    MenuItemType types[MAX_ADDR_PER_SCREEN];
+    uint8_t count = 0;
+    uint8_t i;
+
+    if (!io_monitor_is_configured()) {
+        return;
+    }
+
+    for (i = 0; i < io_monitor_config.x_count && count < MAX_ADDR_PER_SCREEN; i++) {
+        if (io_monitor_config.x_points[i].rs485_addr == MENU_RS485_ADDR_NONE) {
+            continue;
+        }
+        addrs[count] = io_monitor_config.x_points[i].rs485_addr;
+        types[count] = MENU_TYPE_VALUE_BIT;
+        count++;
+    }
+
+    for (i = 0; i < io_monitor_config.y_count && count < MAX_ADDR_PER_SCREEN; i++) {
+        if (io_monitor_config.y_points[i].rs485_addr == MENU_RS485_ADDR_NONE) {
+            continue;
+        }
+        addrs[count] = io_monitor_config.y_points[i].rs485_addr;
+        types[count] = MENU_TYPE_VALUE_BIT;
+        count++;
+    }
+
+    PollManager_RegisterScreenAddresses(menu_ctx.current_item_id, addrs, types, count);
+    PollManager_SetActiveScreen(menu_ctx.current_item_id);
+}
+
+static void io_monitor_sync_paging(void) {
+    uint8_t page_count;
+
+    menu_ctx.io_total_pages = io_monitor_get_total_pages_internal();
+    if (menu_ctx.io_total_pages == 0U) {
+        menu_ctx.io_total_pages = 1U;
+    }
+
+    if (menu_ctx.io_current_page >= menu_ctx.io_total_pages) {
+        menu_ctx.io_current_page = (uint8_t)(menu_ctx.io_total_pages - 1U);
+    }
+
+    page_count = io_monitor_get_page_count(menu_ctx.io_current_page);
+    if (page_count == 0U) {
+        menu_ctx.io_selected_index = 0U;
+    } else if (menu_ctx.io_selected_index >= page_count) {
+        menu_ctx.io_selected_index = (uint8_t)(page_count - 1U);
+    }
+}
+
+static void io_monitor_close(void) {
+    menu_ctx.special_view = MENU_SPECIAL_VIEW_NONE;
+    menu_ctx.io_current_page = 0U;
+    menu_ctx.io_total_pages = 0U;
+    menu_ctx.io_selected_index = 0U;
+    menu_ctx.io_is_editing = false;
+    menu_ctx.io_edit_flash_tick = 0U;
+    menu_ctx.io_edit_flash_inverse = false;
+    menu_ctx.current_state = MENU_STATE_BROWSING;
+    menu_register_current_page_polling(menu_ctx.current_menu_id);
+    menu_ctx.need_redraw = true;
+}
+
+static void io_monitor_move_up(void) {
+    uint8_t page_count;
+
+    if (menu_ctx.io_is_editing) {
+        return;
+    }
+
+    page_count = io_monitor_get_page_count(menu_ctx.io_current_page);
+    if (page_count == 0U) {
+        return;
+    }
+
+    if (menu_ctx.io_selected_index > 0U) {
+        menu_ctx.io_selected_index--;
+        menu_ctx.need_redraw = true;
+        return;
+    }
+
+    if (menu_ctx.io_current_page > 0U) {
+        menu_ctx.io_current_page--;
+        io_monitor_sync_paging();
+
+        page_count = io_monitor_get_page_count(menu_ctx.io_current_page);
+        menu_ctx.io_selected_index = (page_count > 0U) ? (uint8_t)(page_count - 1U) : 0U;
+        menu_ctx.need_redraw = true;
+    }
+}
+
+static void io_monitor_move_down(void) {
+    uint8_t page_count = io_monitor_get_page_count(menu_ctx.io_current_page);
+
+    if (menu_ctx.io_is_editing || page_count == 0U) {
+        return;
+    }
+
+    if (menu_ctx.io_selected_index + 1U < page_count) {
+        menu_ctx.io_selected_index++;
+        menu_ctx.need_redraw = true;
+        return;
+    }
+
+    if (menu_ctx.io_current_page + 1U < menu_ctx.io_total_pages) {
+        menu_ctx.io_current_page++;
+        io_monitor_sync_paging();
+        menu_ctx.io_selected_index = 0U;
+        menu_ctx.need_redraw = true;
+    }
+}
+
+static void io_monitor_page_up(void) {
+    if (menu_ctx.io_is_editing) {
+        return;
+    }
+
+    if (menu_ctx.io_current_page > 0U) {
+        menu_ctx.io_current_page--;
+        io_monitor_sync_paging();
+        menu_ctx.need_redraw = true;
+    }
+}
+
+static void io_monitor_page_down(void) {
+    if (menu_ctx.io_is_editing) {
+        return;
+    }
+
+    if (menu_ctx.io_current_page + 1U < menu_ctx.io_total_pages) {
+        menu_ctx.io_current_page++;
+        io_monitor_sync_paging();
+        menu_ctx.need_redraw = true;
+    }
+}
+
+static void io_monitor_select(void) {
+    const IOMonitorPoint* point;
+    bool is_output = false;
+    bool current_value = false;
+
+    point = io_monitor_get_point(menu_ctx.io_current_page, menu_ctx.io_selected_index, &is_output);
+    if (point == NULL || !is_output || point->rs485_addr == MENU_RS485_ADDR_NONE) {
+        return;
+    }
+
+    if (!menu_ctx.io_is_editing) {
+        menu_ctx.io_is_editing = true;
+        menu_ctx.io_edit_flash_tick = bsp_get_systick();
+        menu_ctx.io_edit_flash_inverse = true;
+        menu_ctx.need_redraw = true;
+        return;
+    }
+
+    if (!HashCache_GetBit(point->rs485_addr, &current_value)) {
+        current_value = false;
+    }
+
+    if (WriteValue(point->rs485_addr, 1U, current_value ? 0 : 1)) {
+        menu_ctx.io_is_editing = false;
+        menu_ctx.io_edit_flash_tick = 0U;
+        menu_ctx.io_edit_flash_inverse = false;
+        menu_ctx.need_redraw = true;
+    }
+}
+
+static void io_monitor_back(void) {
+    if (menu_ctx.io_is_editing) {
+        menu_ctx.io_is_editing = false;
+        menu_ctx.io_edit_flash_tick = 0U;
+        menu_ctx.io_edit_flash_inverse = false;
+        menu_ctx.need_redraw = true;
+        return;
+    }
+
+    io_monitor_close();
+}
+
+static bool alarm_log_open(bool save_history) {
+    if (!alarm_log_is_configured()) {
+        return false;
+    }
+
+    if (save_history && menu_ctx.special_view != MENU_SPECIAL_VIEW_ALARM_LOG) {
+        push_history_snapshot();
+    }
+
+    menu_ctx.special_view = MENU_SPECIAL_VIEW_ALARM_LOG;
+    menu_ctx.current_menu_id = alarm_log_config.menu_id;
+    menu_ctx.current_item_id = alarm_log_config.menu_id;
+    menu_ctx.is_editing = false;
+    menu_ctx.edit_item_id = 0U;
+    menu_ctx.edit_original_value = 0;
+    menu_ctx.edit_pending_value = 0;
+    menu_ctx.edit_value_step_index = 0U;
+    menu_ctx.edit_flash_tick = 0U;
+    menu_ctx.edit_flash_inverse = false;
+    menu_ctx.current_state = MENU_STATE_BROWSING;
+
+    alarm_log_sync_paging();
+    if (alarm_log_get_page_entry_count(alarm_log_current_page) > 0U &&
+        alarm_log_selected_row == 0U) {
+        alarm_log_selected_row = 1U;
+    }
+
+    alarm_log_register_polling();
+    menu_ctx.need_redraw = true;
+    return true;
+}
+
+static void alarm_log_close(void) {
+    uint16_t previous_menu_id;
+    uint16_t previous_item_id;
+
+    menu_ctx.special_view = MENU_SPECIAL_VIEW_NONE;
+    menu_ctx.current_state = MENU_STATE_BROWSING;
+
+    if (pop_history_snapshot(&previous_menu_id, &previous_item_id)) {
+        menu_ctx.current_menu_id = previous_menu_id;
+        select_item_and_refresh(previous_item_id);
+        menu_register_current_page_polling(previous_menu_id);
+    } else {
+        menu_register_current_page_polling(menu_ctx.current_menu_id);
+        menu_ctx.need_redraw = true;
+    }
+}
+
+static void alarm_log_move_up(void) {
+    if (alarm_log_selected_row > 0U) {
+        alarm_log_selected_row--;
+        menu_ctx.need_redraw = true;
+        return;
+    }
+
+    if (alarm_log_current_page > 0U) {
+        alarm_log_current_page--;
+        alarm_log_sync_paging();
+        alarm_log_selected_row = alarm_log_get_page_entry_count(alarm_log_current_page);
+        menu_ctx.need_redraw = true;
+    }
+}
+
+static void alarm_log_move_down(void) {
+    uint8_t page_entry_count = alarm_log_get_page_entry_count(alarm_log_current_page);
+
+    if (alarm_log_selected_row < page_entry_count) {
+        alarm_log_selected_row++;
+        menu_ctx.need_redraw = true;
+        return;
+    }
+
+    if (alarm_log_current_page + 1U < alarm_log_total_pages) {
+        alarm_log_current_page++;
+        alarm_log_sync_paging();
+        page_entry_count = alarm_log_get_page_entry_count(alarm_log_current_page);
+        alarm_log_selected_row = (page_entry_count > 0U) ? 1U : 0U;
+        menu_ctx.need_redraw = true;
+    }
+}
+
+static void alarm_log_page_up(void) {
+    uint8_t page_entry_count;
+
+    if (alarm_log_current_page == 0U) {
+        return;
+    }
+
+    alarm_log_current_page--;
+    alarm_log_sync_paging();
+    page_entry_count = alarm_log_get_page_entry_count(alarm_log_current_page);
+    if (alarm_log_selected_row > page_entry_count) {
+        alarm_log_selected_row = page_entry_count;
+    }
+    menu_ctx.need_redraw = true;
+}
+
+static void alarm_log_page_down(void) {
+    uint8_t page_entry_count;
+
+    if (alarm_log_current_page + 1U >= alarm_log_total_pages) {
+        return;
+    }
+
+    alarm_log_current_page++;
+    alarm_log_sync_paging();
+    page_entry_count = alarm_log_get_page_entry_count(alarm_log_current_page);
+    if (alarm_log_selected_row > page_entry_count) {
+        alarm_log_selected_row = page_entry_count;
+    }
+    if (alarm_log_selected_row == 0U && page_entry_count > 0U) {
+        alarm_log_selected_row = 1U;
+    }
+    menu_ctx.need_redraw = true;
+}
+
+static void alarm_log_select(void) {
+    uint8_t display_index;
+    AlarmLogEntry* entry;
+
+    if (alarm_log_selected_row == 0U) {
+        return;
+    }
+
+    display_index = (uint8_t)(alarm_log_page_start_index + alarm_log_selected_row - 1U);
+    entry = alarm_log_get_entry_by_display_index(display_index);
+    if (entry == NULL || !entry->unread) {
+        return;
+    }
+
+    entry->unread = false;
+    menu_ctx.need_redraw = true;
+}
+
+static void alarm_log_back(void) {
+    alarm_log_close();
 }
 
 // ============================================================================
@@ -858,6 +1650,19 @@ static bool apply_pending_edit_value(MenuItem* item) {
 static void update_edit_flash_state(uint32_t current_tick) {
     bool inverse;
 
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR) {
+        if (!menu_ctx.io_is_editing) {
+            return;
+        }
+
+        inverse = ((current_tick - menu_ctx.io_edit_flash_tick) % 1200U) < 600U;
+        if (inverse != menu_ctx.io_edit_flash_inverse) {
+            menu_ctx.io_edit_flash_inverse = inverse;
+            menu_ctx.need_redraw = true;
+        }
+        return;
+    }
+
     if (!menu_ctx.is_editing) {
         return;
     }
@@ -1022,6 +1827,128 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
     }
 }
 
+static void render_io_monitor_view(void) {
+    uint8_t slot;
+    uint8_t page_count = io_monitor_get_page_count(menu_ctx.io_current_page);
+
+    JLX_ClearRectPixel(0, default_layout.menu_area_top, JLXLCD_W, default_layout.menu_area_height,
+                       0);
+
+    for (slot = 0; slot < IO_MONITOR_PAGE_SIZE; slot++) {
+        const IOMonitorPoint* point;
+        bool is_output = false;
+        bool value = false;
+        char display_text_state[12];
+        char display_text_id[12];
+        const char* io_name;
+        uint8_t row;
+        uint8_t col;
+        uint16_t x;
+        uint16_t y;
+        uint8_t mode = 0;
+
+        row = (uint8_t)(slot / IO_MONITOR_COLUMNS);
+        col = (uint8_t)(slot % IO_MONITOR_COLUMNS);
+        x = (uint16_t)(13U + col * 43U);
+        y = (uint16_t)(default_layout.menu_area_top + row * 22U);
+
+        point = io_monitor_get_point(menu_ctx.io_current_page, slot, &is_output);
+        if (point == NULL) {
+            continue;
+        }
+
+        if (point->rs485_addr == MENU_RS485_ADDR_NONE) {
+            value = false;
+        } else if (!HashCache_GetBit(point->rs485_addr, &value)) {
+            value = false;
+        }
+
+        io_name = get_string(point->text_id);
+        if (io_name == NULL) {
+            io_name = "*";
+        }
+
+        snprintf(display_text_state, sizeof(display_text_state), "%s",
+                 (point->rs485_addr == MENU_RS485_ADDR_NONE) ? "--" : (value ? "开" : "关"));
+        snprintf(display_text_id, sizeof(display_text_id), "%s", io_name);
+
+        if (slot == menu_ctx.io_selected_index && slot < page_count) {
+            if (menu_ctx.io_is_editing && is_output) {
+                mode = menu_ctx.io_edit_flash_inverse ? 1U : 0U;
+            } else {
+                mode = 1U;
+            }
+        }
+
+        JLX_ShowStringAnyRow(x, y, display_text_state, default_layout.font_size, 0);
+        JLX_ShowStringAnyRow(x + 15, y, display_text_id, default_layout.font_size, mode);
+    }
+}
+
+static void render_alarm_log_view(void) {
+    uint8_t row;
+    uint8_t page_entry_count = alarm_log_get_page_entry_count(alarm_log_current_page);
+    uint8_t y = (uint8_t)(default_layout.menu_area_top + default_layout.line_height);
+
+    JLX_ClearRectPixel(0, default_layout.menu_area_top, JLXLCD_W, default_layout.menu_area_height,
+                       0);
+
+    if (alarm_log_selected_row == 0U) {
+        JLX_ShowStringAnyRow(2, default_layout.menu_area_top, ">", default_layout.font_size, 0);
+    }
+    JLX_ShowStringAnyRow(ALARM_LOG_TIME_X, default_layout.menu_area_top, "时间",
+                         default_layout.font_size, 0);
+    JLX_ShowStringAnyRow(ALARM_LOG_TEXT_X, default_layout.menu_area_top, "报警内容",
+                         default_layout.font_size, 0);
+
+    if (page_entry_count == 0U) {
+        JLX_ShowStringAnyRow(ALARM_LOG_TEXT_X,
+                             default_layout.menu_area_top + default_layout.line_height, "--",
+                             default_layout.font_size, 0);
+        return;
+    }
+
+    for (row = 0U; row < page_entry_count; row++) {
+        AlarmLogEntry* entry =
+            alarm_log_get_entry_by_display_index((uint8_t)(alarm_log_page_start_index + row));
+        const char* alarm_text;
+        char time_text[16];
+        TextLayout text_layout;
+        uint8_t mode;
+
+        if (entry == NULL) {
+            continue;
+        }
+
+        alarm_text = get_string(entry->text_id);
+        if (alarm_text == NULL) {
+            alarm_text = "*";
+        }
+
+        snprintf(time_text, sizeof(time_text), "%02u:%02u:%02u", entry->hour, entry->minute,
+                 entry->second);
+        menu_calculate_text_layout(&text_layout, alarm_text, ALARM_LOG_TEXT_WIDTH);
+        mode = entry->unread ? 1U : 0U;
+
+        if (alarm_log_selected_row == (uint8_t)(row + 1U)) {
+            JLX_ShowStringAnyRow(2, y, ">", default_layout.font_size, 0);
+        }
+
+        JLX_ShowStringAnyRow(ALARM_LOG_TIME_X, y, time_text, default_layout.font_size, 0);
+
+        if (text_layout.line_count > 0U) {
+            JLX_ShowStringAnyRow(ALARM_LOG_TEXT_X, y, text_layout.line1, default_layout.font_size,
+                                 mode);
+        }
+        if (text_layout.line_count > 1U) {
+            JLX_ShowStringAnyRow(ALARM_LOG_TEXT_X, y + default_layout.line_height,
+                                 text_layout.line2, default_layout.font_size, mode);
+        }
+
+        y = (uint8_t)(y + alarm_log_get_entry_height(entry));
+    }
+}
+
 // 渲染标题栏
 static void render_header_internal(void) {
     // 清除标题栏区域
@@ -1029,11 +1956,24 @@ static void render_header_internal(void) {
 
     // 获取当前菜单标题
     MenuItem* current_menu = get_menu_item(menu_ctx.current_menu_id);
-    if (current_menu != NULL) {
-        const char* title = get_string(current_menu->text_id);
-        if (title != NULL) {
-            JLX_ShowStringAnyRow(2, 2, title, default_layout.font_size, 0);
+    const char* title = NULL;
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR) {
+        MenuItem* current_item = get_menu_item(menu_ctx.current_item_id);
+        if (current_item != NULL) {
+            title = get_string(current_item->text_id);
         }
+    } else if (menu_ctx.special_view == MENU_SPECIAL_VIEW_ALARM_LOG) {
+        MenuItem* current_item = get_menu_item(menu_ctx.current_menu_id);
+        if (current_item != NULL) {
+            title = get_string(current_item->text_id);
+        }
+    } else if (current_menu != NULL) {
+        title = get_string(current_menu->text_id);
+    }
+
+    if (title != NULL) {
+        JLX_ShowStringAnyRow(2, 2, title, default_layout.font_size, 0);
     }
 
     // 注意：电池状态和时间显示需要根据实际情况实现
@@ -1048,6 +1988,42 @@ static void render_footer_internal(void) {
 
     // 清除底部状态栏区域
     JLX_ClearRectPixel(0, y_pos, JLXLCD_W, default_layout.footer_height, 0);
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR) {
+        bool output_page = io_monitor_page_is_output(menu_ctx.io_current_page);
+
+        if (menu_ctx.io_is_editing) {
+            JLX_ShowStringAnyRow(2, y_pos + 4, "确认:切换   返回:取消", default_layout.font_size,
+                                 0);
+        } else if (output_page) {
+            JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择 确认:编辑", default_layout.font_size, 0);
+        } else {
+            JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择 左/右:翻页", default_layout.font_size,
+                                 0);
+        }
+
+        if (menu_ctx.io_total_pages > 1U) {
+            render_page_info();
+        }
+        return;
+    }
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_ALARM_LOG) {
+        if (alarm_log_count == 0U) {
+            JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择 左/右:翻页", default_layout.font_size,
+                                 0);
+        } else if (alarm_log_selected_row == 0U) {
+            JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择 左/右:翻页", default_layout.font_size,
+                                 0);
+        } else {
+            JLX_ShowStringAnyRow(2, y_pos + 4, "确认:已读 左/右:翻页", default_layout.font_size, 0);
+        }
+
+        if (alarm_log_total_pages > 1U) {
+            render_page_info();
+        }
+        return;
+    }
 
     // 绘制帮助文本
     MenuItem* current_item = get_menu_item(menu_ctx.current_item_id);
@@ -1099,30 +2075,36 @@ static void render_full(void) {
     // 渲染标题栏
     render_header_internal();
 
-    // 清除菜单区域，按动态高度重新布局整页内容
-    JLX_ClearRectPixel(0, default_layout.menu_area_top, JLXLCD_W, default_layout.menu_area_height,
-                       0);
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR) {
+        render_io_monitor_view();
+    } else if (menu_ctx.special_view == MENU_SPECIAL_VIEW_ALARM_LOG) {
+        render_alarm_log_view();
+    } else {
+        // 清除菜单区域，按动态高度重新布局整页内容
+        JLX_ClearRectPixel(0, default_layout.menu_area_top, JLXLCD_W,
+                           default_layout.menu_area_height, 0);
 
-    // 渲染菜单项
-    MenuItem* current_item =
-        get_child_at_index(menu_ctx.current_menu_id, menu_ctx.page_start_index);
+        // 渲染菜单项
+        MenuItem* current_item =
+            get_child_at_index(menu_ctx.current_menu_id, menu_ctx.page_start_index);
 
-    while (current_item != NULL && rendered_items < menu_ctx.items_in_current_page &&
-           rendered_height < default_layout.menu_area_height) {
-        bool is_selected = (current_item->id == menu_ctx.current_item_id);
-        bool is_editing = is_selected && menu_ctx.is_editing;
+        while (current_item != NULL && rendered_items < menu_ctx.items_in_current_page &&
+               rendered_height < default_layout.menu_area_height) {
+            bool is_selected = (current_item->id == menu_ctx.current_item_id);
+            bool is_editing = is_selected && menu_ctx.is_editing;
 
-        // 使用自定义渲染回调或默认渲染
-        if (custom_render_callback != NULL) {
-            custom_render_callback(current_item, rendered_items, is_selected, is_editing);
-        } else {
-            render_menu_item_internal(default_layout.menu_area_top + rendered_height, current_item,
-                                      is_selected, is_editing);
+            // 使用自定义渲染回调或默认渲染
+            if (custom_render_callback != NULL) {
+                custom_render_callback(current_item, rendered_items, is_selected, is_editing);
+            } else {
+                render_menu_item_internal(default_layout.menu_area_top + rendered_height,
+                                          current_item, is_selected, is_editing);
+            }
+
+            rendered_height += get_menu_item_height(current_item);
+            rendered_items++;
+            current_item = get_next_sibling(current_item->id);
         }
-
-        rendered_height += get_menu_item_height(current_item);
-        rendered_items++;
-        current_item = get_next_sibling(current_item->id);
     }
 
     // 渲染底部状态栏
@@ -1136,6 +2118,16 @@ static void render_full(void) {
 // 上移选择（支持翻页逻辑）
 static void handle_move_up(void) {
     uint16_t current_index;
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_ALARM_LOG) {
+        alarm_log_move_up();
+        return;
+    }
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR) {
+        io_monitor_move_up();
+        return;
+    }
 
     if (menu_ctx.is_editing) {
         handle_edit_increase();
@@ -1176,6 +2168,16 @@ static void handle_move_down(void) {
     uint16_t current_index;
     uint16_t next_page_start_index;
 
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_ALARM_LOG) {
+        alarm_log_move_down();
+        return;
+    }
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR) {
+        io_monitor_move_down();
+        return;
+    }
+
     if (menu_ctx.is_editing) {
         handle_edit_decrease();
         return;
@@ -1211,10 +2213,25 @@ static void handle_move_down(void) {
 // 选择菜单项
 static void handle_select_item(void) {
     MenuItem* current = get_menu_item(menu_ctx.current_item_id);
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_ALARM_LOG) {
+        alarm_log_select();
+        return;
+    }
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR) {
+        io_monitor_select();
+        return;
+    }
+
     if (current == NULL) return;
     switch (current->type) {
     case MENU_ITEM_TYPE_SUBMENU:
-        enter_menu_internal(current->data.target_menu_id, true);
+        if (alarm_log_is_configured() && current->data.target_menu_id == alarm_log_config.menu_id) {
+            alarm_log_open(true);
+        } else {
+            enter_menu_internal(current->data.target_menu_id, true);
+        }
         break;
 
     case MENU_ITEM_TYPE_ACTION:
@@ -1237,6 +2254,16 @@ static void handle_select_item(void) {
 
 // 返回上一级
 static void handle_back(void) {
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_ALARM_LOG) {
+        alarm_log_back();
+        return;
+    }
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR) {
+        io_monitor_back();
+        return;
+    }
+
     if (menu_ctx.is_editing) {
         handle_edit_cancel();
         return;
@@ -1382,6 +2409,13 @@ void menu_system_init(void) {
     menu_ctx.current_state = MENU_STATE_IDLE;
     menu_ctx.edit_value_step_index = 0;
     menu_ctx.edit_flash_inverse = false;
+    menu_ctx.special_view = MENU_SPECIAL_VIEW_NONE;
+    menu_ctx.io_current_page = 0;
+    menu_ctx.io_total_pages = 0;
+    menu_ctx.io_selected_index = 0;
+    menu_ctx.io_is_editing = false;
+    menu_ctx.io_edit_flash_tick = 0;
+    menu_ctx.io_edit_flash_inverse = false;
     menu_ctx.need_redraw = true;
 }
 
@@ -1395,6 +2429,79 @@ bool menu_load_config(const MenuItem* items, uint16_t item_count) {
     menu_item_count = item_count;
     menu_register_all_cache_items();
     return true;
+}
+
+bool menu_configure_io_monitor(const IOMonitorConfig* config) {
+    uint8_t i;
+
+    if (config == NULL) {
+        return false;
+    }
+
+    io_monitor_config = *config;
+    if (!io_monitor_is_configured()) {
+        return false;
+    }
+
+    for (i = 0; i < io_monitor_config.x_count; i++) {
+        HashCache_RegisterBit(io_monitor_config.x_points[i].rs485_addr);
+    }
+
+    for (i = 0; i < io_monitor_config.y_count; i++) {
+        HashCache_RegisterBit(io_monitor_config.y_points[i].rs485_addr);
+    }
+
+    return true;
+}
+
+bool menu_configure_alarm_log(const AlarmLogConfig* config) {
+    if (config == NULL || config->rs485_addr == MENU_RS485_ADDR_NONE) {
+        return false;
+    }
+
+    alarm_log_config = *config;
+    memset(alarm_log_entries, 0, sizeof(alarm_log_entries));
+    alarm_log_head = 0U;
+    alarm_log_count = 0U;
+    alarm_log_current_page = 0U;
+    alarm_log_total_pages = 1U;
+    alarm_log_selected_row = 0U;
+    alarm_log_last_value = 0U;
+    alarm_log_has_last_value = false;
+
+    if (config->rs485_type == MENU_TYPE_VALUE_BIT) {
+        HashCache_RegisterBit(config->rs485_addr);
+    } else {
+        HashCache_RegisterWord(config->rs485_addr);
+        if (config->rs485_type == MENU_TYPE_VALUE_DINT ||
+            config->rs485_type == MENU_TYPE_VALUE_UINT32) {
+            HashCache_RegisterWord((uint16_t)(config->rs485_addr + 1U));
+        }
+    }
+
+    PollManager_SetAlarmAddress(config->rs485_addr, config->rs485_type);
+    return true;
+}
+
+void menu_open_io_monitor(void) {
+    if (!io_monitor_is_configured()) {
+        return;
+    }
+
+    menu_ctx.special_view = MENU_SPECIAL_VIEW_IO_MONITOR;
+    menu_ctx.io_current_page = 0U;
+    menu_ctx.io_selected_index = 0U;
+    menu_ctx.io_is_editing = false;
+    menu_ctx.io_edit_flash_tick = 0U;
+    menu_ctx.io_edit_flash_inverse = false;
+    menu_ctx.current_state = MENU_STATE_BROWSING;
+    io_monitor_sync_paging();
+    io_monitor_register_all_polling();
+    menu_ctx.need_redraw = true;
+}
+
+void menu_open_alarm_log(void) {
+    (void)alarm_log_open(true);
 }
 
 // 启动菜单系统
@@ -1420,6 +2527,16 @@ bool menu_navigate_back(void) {
     uint16_t previous_menu_id;
     uint16_t previous_item_id;
 
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR) {
+        io_monitor_close();
+        return true;
+    }
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_ALARM_LOG) {
+        alarm_log_close();
+        return true;
+    }
+
     if (pop_history_snapshot(&previous_menu_id, &previous_item_id)) {
         menu_ctx.current_menu_id = previous_menu_id;
         select_item_and_refresh(previous_item_id);
@@ -1437,6 +2554,7 @@ bool menu_navigate_to_root(void) {
 
     // 假设第一个菜单项是根菜单
     menu_ctx.history_top = 0;
+    menu_ctx.special_view = MENU_SPECIAL_VIEW_NONE;
     return enter_menu_internal(menu_items[0].id, false);
 }
 
@@ -1480,6 +2598,46 @@ void menu_handle_key_event(void) {
             // 忽略未知事件类型
             break;
         }
+    }
+}
+
+void menu_handle_data_updates(const uint16_t* changed_addrs, const uint32_t* changed_values,
+                              uint8_t changed_count) {
+    uint8_t i;
+
+    if (!alarm_log_is_configured() || changed_addrs == NULL || changed_values == NULL) {
+        return;
+    }
+
+    for (i = 0U; i < changed_count; i++) {
+        uint32_t current_value;
+
+        if (changed_addrs[i] != alarm_log_config.rs485_addr) {
+            continue;
+        }
+
+        current_value = changed_values[i];
+        if (!alarm_log_has_last_value) {
+            // if (current_value != 0U) {
+            //     alarm_log_append((uint16_t)current_value);
+            //     (void)alarm_log_open(true);
+            // }
+            // alarm_log_last_value = current_value;
+            alarm_log_has_last_value = true;
+            // continue;
+        }
+
+        if (current_value == 0U) {
+            if (alarm_log_last_value != 0U) {
+                alarm_log_mark_all_read();
+                menu_ctx.need_redraw = true;
+            }
+        } else if (alarm_log_last_value == 0U || current_value != alarm_log_last_value) {
+            alarm_log_append((uint16_t)current_value);
+            (void)alarm_log_open(true);
+        }
+
+        alarm_log_last_value = current_value;
     }
 }
 
@@ -1583,7 +2741,9 @@ static void handle_short_press(KeyEvent* event) {
         break;
 
     case FUNKEY_LEFT:
-        if (menu_ctx.is_editing) {
+        if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR) {
+            io_monitor_page_up();
+        } else if (menu_ctx.is_editing) {
             MenuItem* edit_item = get_menu_item(menu_ctx.edit_item_id);
             if (is_value_editing_item(edit_item)) {
                 switch_value_edit_step(-1);
@@ -1597,7 +2757,9 @@ static void handle_short_press(KeyEvent* event) {
         break;
 
     case FUNKEY_RIGHT:
-        if (menu_ctx.is_editing) {
+        if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR) {
+            io_monitor_page_down();
+        } else if (menu_ctx.is_editing) {
             MenuItem* edit_item = get_menu_item(menu_ctx.edit_item_id);
             if (is_value_editing_item(edit_item)) {
                 switch_value_edit_step(1);
@@ -1618,6 +2780,11 @@ static void handle_short_press(KeyEvent* event) {
 // 处理长按事件（特殊功能：快速导航/快速调整）
 static void handle_long_press(KeyEvent* event) {
     if (event == NULL) return;
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR ||
+        menu_ctx.special_view == MENU_SPECIAL_VIEW_ALARM_LOG) {
+        return;
+    }
 
     switch (event->key) {
     case FUNKEY_UP:
@@ -1669,6 +2836,26 @@ static void handle_long_press(KeyEvent* event) {
 // 处理重复触发事件（主要用于长按后的连续操作）
 static void handle_repeat_event(KeyEvent* event) {
     if (event == NULL) return;
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR) {
+        return;
+    }
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_ALARM_LOG) {
+        switch (event->key) {
+        case FUNKEY_UP:
+            alarm_log_move_up();
+            break;
+
+        case FUNKEY_DOWN:
+            alarm_log_move_down();
+            break;
+
+        default:
+            break;
+        }
+        return;
+    }
 
     switch (event->key) {
     case FUNKEY_UP:
@@ -1773,6 +2960,16 @@ static void update_page_info(void) {
 
 // 向前翻页（左键）
 static void handle_page_up(void) {
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_ALARM_LOG) {
+        alarm_log_page_up();
+        return;
+    }
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR) {
+        io_monitor_page_up();
+        return;
+    }
+
     if (menu_ctx.is_editing) {
         // 编辑模式下保持原有功能
         handle_edit_decrease();
@@ -1784,6 +2981,16 @@ static void handle_page_up(void) {
 
 // 向后翻页（右键）
 static void handle_page_down(void) {
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_ALARM_LOG) {
+        alarm_log_page_down();
+        return;
+    }
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR) {
+        io_monitor_page_down();
+        return;
+    }
+
     if (menu_ctx.is_editing) {
         // 编辑模式下保持原有功能
         handle_edit_increase();
@@ -1796,14 +3003,24 @@ static void handle_page_down(void) {
 // 渲染页码信息（在底部状态栏显示）
 static void render_page_info(void) {
     // 只有在多页时才显示页码信息
-    if (menu_ctx.total_pages > 1) {
+    uint8_t current_page = menu_ctx.current_page;
+    uint8_t total_pages = menu_ctx.total_pages;
+
+    if (menu_ctx.special_view == MENU_SPECIAL_VIEW_IO_MONITOR) {
+        current_page = (uint8_t)(menu_ctx.io_current_page + 1U);
+        total_pages = menu_ctx.io_total_pages;
+    } else if (menu_ctx.special_view == MENU_SPECIAL_VIEW_ALARM_LOG) {
+        current_page = (uint8_t)(alarm_log_current_page + 1U);
+        total_pages = alarm_log_total_pages;
+    }
+
+    if (total_pages > 1) {
         uint8_t y_pos = JLXLCD_H - default_layout.footer_height;
         char page_str[16];
         uint16_t page_width;
         uint16_t x_pos;
 
-        snprintf(page_str, sizeof(page_str), "(%d/%d)", menu_ctx.current_page,
-                 menu_ctx.total_pages);
+        snprintf(page_str, sizeof(page_str), "(%d/%d)", current_page, total_pages);
 
         page_width = menu_calculate_text_width(page_str);
         x_pos = (page_width + 2 < JLXLCD_W) ? (JLXLCD_W - page_width - 2) : 0;
