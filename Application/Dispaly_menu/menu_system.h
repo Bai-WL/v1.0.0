@@ -39,6 +39,11 @@ typedef enum {
     MENU_STATE_ERROR            // 错误状态
 } MenuState;
 
+typedef enum {
+    MENU_SPECIAL_VIEW_NONE = 0,
+    MENU_SPECIAL_VIEW_IO_MONITOR
+} MenuSpecialView;
+
 // 屏幕布局区域
 typedef struct {
     uint8_t header_height;       // 标题栏高度
@@ -119,6 +124,18 @@ typedef struct MenuItem {
 
 #define MENU_RS485_ADDR_NONE 0xFFFFU
 
+typedef struct {
+    StringID text_id;
+    uint16_t rs485_addr;
+} IOMonitorPoint;
+
+typedef struct {
+    const IOMonitorPoint* x_points;
+    uint8_t x_count;
+    const IOMonitorPoint* y_points;
+    uint8_t y_count;
+} IOMonitorConfig;
+
 // 菜单上下文
 typedef struct {
     uint16_t current_menu_id;  // 当前菜单ID
@@ -152,6 +169,15 @@ typedef struct {
 
     // 当前状态
     MenuState current_state;  // 当前菜单状态
+
+    // 特殊界面状态
+    MenuSpecialView special_view;
+    uint8_t io_current_page;      // 0-based
+    uint8_t io_total_pages;
+    uint8_t io_selected_index;    // 当前页内索引
+    bool io_is_editing;
+    uint32_t io_edit_flash_tick;
+    bool io_edit_flash_inverse;
 } MenuContext;
 
 // 事件处理函数类型
@@ -172,6 +198,8 @@ void menu_system_init(void);
 bool menu_load_config(const MenuItem* items, uint16_t item_count);
 void menu_start(uint16_t initial_menu_id);
 void menu_set_language(Language lang);
+bool menu_configure_io_monitor(const IOMonitorConfig* config);
+void menu_open_io_monitor(void);
 
 // 导航接口
 bool menu_navigate_to(uint16_t menu_id);
