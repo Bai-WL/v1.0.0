@@ -35,6 +35,7 @@ static void menu_rs485_runtime_process(uint32_t current_tick) {
     last_check_tick = current_tick;
     changed_count = PollManager_CheckAndUpdateValues(changed_addrs, changed_values);
     if (changed_count > 0U) {
+        menu_handle_data_updates(changed_addrs, changed_values, changed_count);
         menu_request_redraw();
     }
 }

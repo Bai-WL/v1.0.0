@@ -60,6 +60,12 @@ static const IOMonitorConfig io_monitor_config = {
     .y_count = (uint8_t)(sizeof(io_monitor_y_points) / sizeof(io_monitor_y_points[0])),
 };
 
+static const AlarmLogConfig alarm_log_config = {
+    .menu_id = 40U,
+    .rs485_addr = 12907U,
+    .rs485_type = MENU_TYPE_VALUE_UINT16,
+};
+
 static void open_io_monitor(void) {
     menu_open_io_monitor();
 }
@@ -185,6 +191,7 @@ void test_menu_navigation(void) {
     // 初始化菜单系统
     menu_system_init();
     menu_configure_io_monitor(&io_monitor_config);
+    menu_configure_alarm_log(&alarm_log_config);
     menu_load_config(menu_items, MENU_ITEM_COUNT);
     // 启动菜单系统
     menu_start(0);  // 从主菜单开始
