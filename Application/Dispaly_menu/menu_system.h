@@ -17,15 +17,16 @@
 
 // 菜单项类型枚举
 typedef enum {
-    MENU_ITEM_TYPE_NONE = 0,  // 空项
-    MENU_ITEM_TYPE_SUBMENU,   // 子菜单
-    MENU_ITEM_TYPE_ACTION,    // 执行动作
-    MENU_ITEM_TYPE_TOGGLE,    // 开关项
-    MENU_ITEM_TYPE_VALUE,     // 数值参数
-    MENU_ITEM_TYPE_STRING,    // 字符串参数
-    MENU_ITEM_TYPE_LIST,      // 列表选择
-    MENU_ITEM_TYPE_INFO,      // 只读信息
-    MENU_ITEM_TYPE_SEPARATOR  // 分隔线
+    MENU_ITEM_TYPE_NONE = 0,   // 空项
+    MENU_ITEM_TYPE_SUBMENU,    // 子菜单
+    MENU_ITEM_TYPE_ACTION,     // 执行动作
+    MENU_ITEM_TYPE_TOGGLE,     // 开关项
+    MENU_ITEM_TYPE_MOMENTARY,  // 按住生效（按下ON，松开OFF）
+    MENU_ITEM_TYPE_VALUE,      // 数值参数
+    MENU_ITEM_TYPE_STRING,     // 字符串参数
+    MENU_ITEM_TYPE_LIST,       // 列表选择
+    MENU_ITEM_TYPE_INFO,       // 只读信息
+    MENU_ITEM_TYPE_SEPARATOR   // 分隔线
 } MenuItemTypes;
 
 // 菜单状态枚举
@@ -96,7 +97,17 @@ typedef struct MenuItem {
         // TOGGLE类型
         struct {
             bool* toggle_value;            // 开关值指针
+            StringID* toggle_option_ids;   // 状态文本ID列表（索引0=OFF，1=ON）
+            uint8_t toggle_option_count;   // 状态文本数量
             void (*toggle_changed)(bool);  // 值改变回调
+        };
+
+        // MOMENTARY类型（按住生效）
+        struct {
+            bool* momentary_value;            // 按住状态指针
+            StringID* momentary_option_ids;   // 状态文本ID列表（索引0=OFF，1=ON）
+            uint8_t momentary_option_count;   // 状态文本数量
+            void (*momentary_changed)(bool);  // 状态改变回调
         };
 
         // VALUE类型

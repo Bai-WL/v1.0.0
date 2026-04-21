@@ -77,6 +77,8 @@ static uint8_t alarm_log_page_start_index = 0U;
 static uint8_t alarm_log_selected_row = 0U;
 static uint32_t alarm_log_last_value = 0U;
 static bool alarm_log_has_last_value = false;
+static bool momentary_enter_active = false;
+static uint16_t momentary_active_item_id = 0U;
 
 // 菜单上下文
 static MenuContext menu_ctx = {.current_menu_id = 0,
@@ -195,6 +197,8 @@ static void alarm_log_page_down(void);
 static void alarm_log_select(void);
 static void alarm_log_back(void);
 static void render_alarm_log_view(void);
+static bool menu_item_set_momentary_state(MenuItem* item, bool on);
+static void menu_update_momentary_enter_state(void);
 
 // 按键事件内部处理函数
 static void handle_short_press(KeyEvent* event);
@@ -403,6 +407,7 @@ static uint16_t get_menu_item_max_text_width(const MenuItem* item, uint8_t text_
         break;
 
     case MENU_ITEM_TYPE_TOGGLE:
+    case MENU_ITEM_TYPE_MOMENTARY:
         max_text_width -= 32;
         break;
 
@@ -1425,6 +1430,12 @@ static void menu_item_update_shadow_value(const MenuItem* item, int32_t value) {
         }
         break;
 
+    case MENU_ITEM_TYPE_MOMENTARY:
+        if (item->data.momentary_value != NULL) {
+            *(item->data.momentary_value) = (value != 0);
+        }
+        break;
+
     case MENU_ITEM_TYPE_VALUE:
         if (item->data.value_ptr != NULL) {
             *(item->data.value_ptr) = value;
@@ -1501,6 +1512,9 @@ static int32_t get_editable_item_value(const MenuItem* item) {
     case MENU_ITEM_TYPE_TOGGLE:
         return (item->data.toggle_value != NULL && *(item->data.toggle_value)) ? 1 : 0;
 
+    case MENU_ITEM_TYPE_MOMENTARY:
+        return (item->data.momentary_value != NULL && *(item->data.momentary_value)) ? 1 : 0;
+
     case MENU_ITEM_TYPE_VALUE:
         return (item->data.value_ptr != NULL) ? *(item->data.value_ptr) : 0;
 
@@ -1518,6 +1532,59 @@ static int32_t get_render_value(const MenuItem* item, bool is_selected, bool is_
     }
 
     return get_editable_item_value(item);
+}
+
+static bool menu_item_set_momentary_state(MenuItem* item, bool on) {
+    int32_t value;
+
+    if (item == NULL || item->type != MENU_ITEM_TYPE_MOMENTARY) {
+        return false;
+    }
+
+    value = on ? 1 : 0;
+
+    if (menu_item_has_rs485_binding(item) &&
+        !WriteValue(item->rs485_addr, item->rs485_width, value)) {
+        return false;
+    }
+
+    menu_item_update_shadow_value(item, value);
+    if (item->data.momentary_changed != NULL) {
+        item->data.momentary_changed(on);
+    }
+
+    return true;
+}
+
+static void menu_update_momentary_enter_state(void) {
+    MenuItem* current_item = get_menu_item(menu_ctx.current_item_id);
+    bool is_enter_pressed = key_control_is_key_pressed(FUNKEY_ENTER);
+    bool can_hold = (menu_ctx.special_view == MENU_SPECIAL_VIEW_NONE && !menu_ctx.is_editing &&
+                     current_item != NULL && current_item->type == MENU_ITEM_TYPE_MOMENTARY);
+
+    if (can_hold && is_enter_pressed) {
+        if (!momentary_enter_active || momentary_active_item_id != current_item->id) {
+            if (momentary_enter_active) {
+                MenuItem* old_item = get_menu_item(momentary_active_item_id);
+                (void)menu_item_set_momentary_state(old_item, false);
+            }
+
+            if (menu_item_set_momentary_state(current_item, true)) {
+                momentary_enter_active = true;
+                momentary_active_item_id = current_item->id;
+                menu_ctx.need_redraw = true;
+            }
+        }
+        return;
+    }
+
+    if (momentary_enter_active) {
+        MenuItem* active_item = get_menu_item(momentary_active_item_id);
+        (void)menu_item_set_momentary_state(active_item, false);
+        momentary_enter_active = false;
+        momentary_active_item_id = 0U;
+        menu_ctx.need_redraw = true;
+    }
 }
 
 static bool is_value_editing_item(const MenuItem* item) {
@@ -1736,10 +1803,21 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
 
     case MENU_ITEM_TYPE_TOGGLE: {
         const char* toggle_text = NULL;
+        StringID* option_ids = item->data.toggle_option_ids;
+        uint8_t option_count = item->data.toggle_option_count;
         uint8_t value_mode = (is_selected && is_editing && menu_ctx.edit_flash_inverse) ? 1 : 0;
         int32_t display_value = get_render_value(item, is_selected, is_editing);
+        uint8_t selection = (display_value != 0) ? 1U : 0U;
 
-        toggle_text = (display_value != 0) ? get_string(STR_YES) : get_string(STR_NO);
+        if (option_ids != NULL && selection < option_count) {
+            const char* selected_text = get_string(option_ids[selection]);
+            if (selected_text != NULL && selected_text[0] != '\0' && selected_text[0] != '*') {
+                toggle_text = selected_text;
+            }
+        }
+        if (toggle_text == NULL) {
+            toggle_text = (selection != 0U) ? get_string(STR_YES) : get_string(STR_NO);
+        }
         if (toggle_text != NULL) {
             // 根据行数调整位置
             if (text_layout.line_count > 1) {
@@ -1748,6 +1826,32 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
             } else {
                 JLX_ShowStringAnyRow(JLXLCD_W - 32, y_pos, toggle_text, default_layout.font_size,
                                      value_mode);
+            }
+        }
+    } break;
+
+    case MENU_ITEM_TYPE_MOMENTARY: {
+        const char* state_text = NULL;
+        StringID* option_ids = item->data.momentary_option_ids;
+        uint8_t option_count = item->data.momentary_option_count;
+        int32_t display_value = get_render_value(item, is_selected, false);
+        uint8_t selection = (display_value != 0) ? 1U : 0U;
+
+        if (option_ids != NULL && selection < option_count) {
+            const char* selected_text = get_string(option_ids[selection]);
+            if (selected_text != NULL && selected_text[0] != '\0' && selected_text[0] != '*') {
+                state_text = selected_text;
+            }
+        }
+        if (state_text == NULL) {
+            state_text = (selection != 0U) ? get_string(STR_YES) : get_string(STR_NO);
+        }
+        if (state_text != NULL) {
+            if (text_layout.line_count > 1) {
+                JLX_ShowStringAnyRow(JLXLCD_W - 32, y_pos + default_layout.line_height, state_text,
+                                     default_layout.font_size, 0);
+            } else {
+                JLX_ShowStringAnyRow(JLXLCD_W - 32, y_pos, state_text, default_layout.font_size, 0);
             }
         }
     } break;
@@ -2242,9 +2346,12 @@ static void handle_select_item(void) {
         break;
 
     case MENU_ITEM_TYPE_TOGGLE:
+    case MENU_ITEM_TYPE_MOMENTARY:
     case MENU_ITEM_TYPE_VALUE:
     case MENU_ITEM_TYPE_LIST:
-        begin_edit_session(current);
+        if (current->type != MENU_ITEM_TYPE_MOMENTARY) {
+            begin_edit_session(current);
+        }
         break;
 
     default:
@@ -2416,6 +2523,8 @@ void menu_system_init(void) {
     menu_ctx.io_is_editing = false;
     menu_ctx.io_edit_flash_tick = 0;
     menu_ctx.io_edit_flash_inverse = false;
+    momentary_enter_active = false;
+    momentary_active_item_id = 0U;
     menu_ctx.need_redraw = true;
 }
 
@@ -2576,6 +2685,9 @@ MenuState menu_get_current_state(void) {
 // 处理按键事件（支持短按、长按、重复触发）
 void menu_handle_key_event(void) {
     KeyEvent event;
+
+    menu_update_momentary_enter_state();
+
     while (key_control_get_event(&event)) {
         // 根据事件类型处理不同的按键行为
         switch (event.type) {
@@ -2729,6 +2841,13 @@ static void handle_short_press(KeyEvent* event) {
         break;
 
     case FUNKEY_ENTER:
+        if (!menu_ctx.is_editing && menu_ctx.special_view == MENU_SPECIAL_VIEW_NONE) {
+            MenuItem* current = get_menu_item(menu_ctx.current_item_id);
+            if (current != NULL && current->type == MENU_ITEM_TYPE_MOMENTARY) {
+                break;
+            }
+        }
+
         if (menu_ctx.is_editing) {
             handle_edit_confirm();
         } else {
