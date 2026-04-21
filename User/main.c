@@ -69,14 +69,12 @@ int main(void) {
         // 1ms
         if (current_tick - last_1ms_tick >= 1) {
             last_1ms_tick = current_tick;
-            bsp_RunPer1ms();
             key_menu_loop(last_1ms_tick);  // 集成按键扫描和菜单处理
         }
 
         // 10ms
         if (current_tick - last_10ms_tick >= 10) {
             last_10ms_tick = current_tick;
-            bsp_RunPer10ms();
             menu_rs485_runtime_process(last_10ms_tick);
         }
 

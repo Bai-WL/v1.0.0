@@ -329,8 +329,10 @@ void pm_shutdown_request(void)
 static void do_sth_before_suspend(void)
 {
     hi2c0.i2c_ops.rst(&hi2c0);
+    #ifdef WIFI_H02W
     bsp_modbus_tcp_reset_windows();
     bsp_atbm6431_enter_sleepmode();
+    #endif
     bsp_JLXLcdEnterSleepMode();
 }
 
@@ -365,7 +367,9 @@ static void pm_suspend(void)
  */
 static void do_sth_in_resume(void)
 {
+		#ifdef WIFI_H02W
     bsp_atbm6431_exit_sleepmode();
+		#endif
     bsp_JLXLcdExitSleepMode();
 }
 
