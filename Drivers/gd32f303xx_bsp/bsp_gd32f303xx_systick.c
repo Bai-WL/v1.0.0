@@ -35,7 +35,10 @@ void bsp_SysTickInit(void)
 void bsp_SysTimDelayCallback(void)
 {
 	_ulSysDelay++;
-	// 应用层时间任务已移到主循环中执行，不再在中断中处理
+	bsp_RunPer1ms();
+	if (!(_ulSysDelay%10)) {
+		bsp_RunPer10ms();
+	}
 }
 
 uint32_t bsp_get_systick(void)

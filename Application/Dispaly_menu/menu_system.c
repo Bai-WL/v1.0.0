@@ -23,7 +23,7 @@ static const ScreenLayout default_layout = {
     .menu_area_height = 88,  // 菜单区域高度88像素
     .footer_height = 24,     // 底部状态栏24像素
     .item_height = 16,       // 每个菜单项16像素
-    .font_size = 0,          // 8号字体
+    .font_size = 0,          // 11号字体
     .cn_char_width = 13,     // 中文字符宽度13像素
     .cn_char_height = 16,    // 中文字符高度16像素
     .en_char_width = 7,      // 英文字符宽度7像素
@@ -37,6 +37,13 @@ static const ScreenLayout default_layout = {
 };
 
 static const int32_t value_edit_steps[] = {1, 10, 100, 1000, 10000};
+
+#define VALUE_SHOW_WITH 36U
+#define LIST_SHOW_WITH 36U
+#define TOGGLE_SHOW_WITH 36U
+#define INFO_SHOW_WITH 36U
+#define MOMENTARY_SHOW_WITH 36U
+
 #define VALUE_EDIT_STEP_COUNT ((uint8_t)(sizeof(value_edit_steps) / sizeof(value_edit_steps[0])))
 
 // 计算可视项数量（按默认单行高度估算）
@@ -413,16 +420,16 @@ static uint16_t get_menu_item_max_text_width(const MenuItem* item, uint8_t text_
 
     case MENU_ITEM_TYPE_TOGGLE:
     case MENU_ITEM_TYPE_MOMENTARY:
-        max_text_width -= 32;
+        max_text_width -= TOGGLE_SHOW_WITH;
         break;
 
     case MENU_ITEM_TYPE_VALUE:
     case MENU_ITEM_TYPE_INFO:
-        max_text_width -= 64;
+        max_text_width -= INFO_SHOW_WITH;
         break;
 
     case MENU_ITEM_TYPE_LIST:
-        max_text_width -= 64;
+        max_text_width -= LIST_SHOW_WITH;
         break;
 
     default:
@@ -1869,11 +1876,12 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
         if (toggle_text != NULL) {
             // 根据行数调整位置
             if (text_layout.line_count > 1) {
-                JLX_ShowStringAnyRow(JLXLCD_W - 32, y_pos + default_layout.line_height, toggle_text,
+                JLX_ShowStringAnyRow(JLXLCD_W - TOGGLE_SHOW_WITH,
+                                     y_pos + default_layout.line_height, toggle_text,
                                      default_layout.font_size, value_mode);
             } else {
-                JLX_ShowStringAnyRow(JLXLCD_W - 32, y_pos, toggle_text, default_layout.font_size,
-                                     value_mode);
+                JLX_ShowStringAnyRow(JLXLCD_W - TOGGLE_SHOW_WITH, y_pos, toggle_text,
+                                     default_layout.font_size, value_mode);
             }
         }
     } break;
@@ -1896,10 +1904,12 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
         }
         if (state_text != NULL) {
             if (text_layout.line_count > 1) {
-                JLX_ShowStringAnyRow(JLXLCD_W - 32, y_pos + default_layout.line_height, state_text,
+                JLX_ShowStringAnyRow(JLXLCD_W - MOMENTARY_SHOW_WITH,
+                                     y_pos + default_layout.line_height, state_text,
                                      default_layout.font_size, 0);
             } else {
-                JLX_ShowStringAnyRow(JLXLCD_W - 32, y_pos, state_text, default_layout.font_size, 0);
+                JLX_ShowStringAnyRow(JLXLCD_W - MOMENTARY_SHOW_WITH, y_pos, state_text,
+                                     default_layout.font_size, 0);
             }
         }
     } break;
@@ -1917,21 +1927,21 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
         }
         // 根据行数调整位置
         if (text_layout.line_count > 1) {
-            JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos + default_layout.line_height, value_str,
+            JLX_ShowStringAnyRow(JLXLCD_W - VALUE_SHOW_WITH, y_pos + default_layout.line_height,
+                                 value_str, default_layout.font_size, value_mode);
+
+            if (is_selected && is_editing) {
+                // 编辑模式下高亮显示
+                bsp_JLXLcdShowUnderline(JLXLCD_W - VALUE_SHOW_WITH,
+                                        y_pos + default_layout.line_height + 14, underline_width);
+            }
+        } else {
+            JLX_ShowStringAnyRow(JLXLCD_W - VALUE_SHOW_WITH, y_pos, value_str,
                                  default_layout.font_size, value_mode);
 
             if (is_selected && is_editing) {
                 // 编辑模式下高亮显示
-                bsp_JLXLcdShowUnderline(JLXLCD_W - 64, y_pos + default_layout.line_height + 14,
-                                        underline_width);
-            }
-        } else {
-            JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos, value_str, default_layout.font_size,
-                                 value_mode);
-
-            if (is_selected && is_editing) {
-                // 编辑模式下高亮显示
-                bsp_JLXLcdShowUnderline(JLXLCD_W - 64, y_pos + 14, underline_width);
+                bsp_JLXLcdShowUnderline(JLXLCD_W - VALUE_SHOW_WITH, y_pos + 14, underline_width);
             }
         }
     } break;
@@ -1947,21 +1957,23 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
                 if (selected_text != NULL) {
                     // 根据行数调整位置
                     if (text_layout.line_count > 1) {
-                        JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos + default_layout.line_height,
-                                             selected_text, default_layout.font_size, value_mode);
-
-                        if (is_selected && is_editing) {
-                            JLX_ShowStringAnyRow(JLXLCD_W - 16, y_pos + default_layout.line_height,
-                                                 "v", default_layout.font_size, value_mode);
-                        }
-                    } else {
-                        JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos, selected_text,
+                        JLX_ShowStringAnyRow(JLXLCD_W - LIST_SHOW_WITH,
+                                             y_pos + default_layout.line_height, selected_text,
                                              default_layout.font_size, value_mode);
 
-                        if (is_selected && is_editing) {
-                            JLX_ShowStringAnyRow(JLXLCD_W - 16, y_pos, "v",
-                                                 default_layout.font_size, value_mode);
-                        }
+                        // if (is_selected && is_editing) {
+                        //     JLX_ShowStringAnyRow(JLXLCD_W - 16, y_pos +
+                        //     default_layout.line_height,
+                        //                          "v", default_layout.font_size, value_mode);
+                        // }
+                    } else {
+                        JLX_ShowStringAnyRow(JLXLCD_W - LIST_SHOW_WITH, y_pos, selected_text,
+                                             default_layout.font_size, value_mode);
+
+                        // if (is_selected && is_editing) {
+                        //     JLX_ShowStringAnyRow(JLXLCD_W - 16, y_pos, "v",
+                        //                          default_layout.font_size, value_mode);
+                        // }
                     }
                 }
             }

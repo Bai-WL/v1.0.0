@@ -11,17 +11,17 @@
 #define SUBMENU_ITEM(id, text, parent, first_child, next, target)                 \
     {                                                                             \
         MENU_ITEM_TYPE_SUBMENU, id, text, STR_NONE, 0, parent, first_child, next, \
-            MENU_RS485_ADDR_NONE, MENU_TYPE_VALUE_UINT16, 0, {                    \
-            .target_menu_id = target                                              \
-        }                                                                         \
+            MENU_RS485_ADDR_NONE, MENU_TYPE_VALUE_UINT16, 0, .data = {            \
+                .target_menu_id = target                                          \
+            }                                                                     \
     }
 
 #define ACTION_ITEM(id, text, parent, next, callback)                                        \
     {                                                                                        \
         MENU_ITEM_TYPE_ACTION, id, text, STR_NONE, 0, parent, 0, next, MENU_RS485_ADDR_NONE, \
-            MENU_TYPE_VALUE_UINT16, 0, {                                                     \
-            .action_callback = callback                                                      \
-        }                                                                                    \
+            MENU_TYPE_VALUE_UINT16, 0, .data = {                                             \
+                .action_callback = callback                                                  \
+            }                                                                                \
     }
 
 #define VALUE_ITEM(id, text, parent, next, addr, minv, maxv, dp)                      \
@@ -33,40 +33,42 @@
         }                                                                             \
     }
 
-#define TOGGLE_ITEM(id, text, parent, next, addr, option_ids)                                     \
+#define TOGGLE_ITEM(id, text, parent, next, addr, options)                                        \
     {                                                                                             \
         MENU_ITEM_TYPE_TOGGLE, id, text, STR_NONE, 0, parent, 0, next, addr, MENU_TYPE_VALUE_BIT, \
             1, {                                                                                  \
-            .toggle_value = NULL, .toggle_option_ids = option_ids,                                \
-            .toggle_option_count = COUNT_OF(option_ids), .toggle_changed = NULL                   \
+            .toggle_value = NULL, .toggle_option_ids = options,                                   \
+            .toggle_option_count = COUNT_OF(options), .toggle_changed = NULL                      \
         }                                                                                         \
     }
 
-#define LIST_ITEM_BIT(id, text, parent, next, addr, option_ids)                                    \
+#define LIST_ITEM_BIT(id, text, parent, next, addr, opts)                                          \
     {                                                                                              \
         MENU_ITEM_TYPE_LIST, id, text, STR_NONE, 0, parent, 0, next, addr, MENU_TYPE_VALUE_BIT, 1, \
-        {                                                                                          \
-            .selection_ptr = NULL, .option_ids = option_ids, .option_count = COUNT_OF(option_ids), \
-            .selection_changed = NULL                                                              \
-        }                                                                                          \
+            .data = {                                                                              \
+                .selection_ptr = NULL,                                                             \
+                .option_ids = opts,                                                                \
+                .option_count = COUNT_OF(opts),                                                    \
+                .selection_changed = NULL                                                          \
+            }                                                                                      \
     }
 
-#define LIST_ITEM_WORD(id, text, parent, next, addr, option_ids)                                   \
+#define LIST_ITEM_WORD(id, text, parent, next, addr, options)                                      \
     {                                                                                              \
         MENU_ITEM_TYPE_LIST, id, text, STR_NONE, 0, parent, 0, next, addr, MENU_TYPE_VALUE_UINT16, \
             2, {                                                                                   \
-            .selection_ptr = NULL, .option_ids = option_ids, .option_count = COUNT_OF(option_ids), \
+            .selection_ptr = NULL, .option_ids = options, .option_count = COUNT_OF(options),       \
             .selection_changed = NULL                                                              \
         }                                                                                          \
     }
 
-#define MOMENTARY_ITEM(id, text, parent, next, addr, option_ids)                      \
-    {                                                                                 \
-        MENU_ITEM_TYPE_MOMENTARY, id, text, STR_NONE, 0, parent, 0, next, addr,       \
-            MENU_TYPE_VALUE_BIT, 1, {                                                 \
-            .momentary_value = NULL, .momentary_option_ids = option_ids,              \
-            .momentary_option_count = COUNT_OF(option_ids), .momentary_changed = NULL \
-        }                                                                             \
+#define MOMENTARY_ITEM(id, text, parent, next, addr, options)                      \
+    {                                                                              \
+        MENU_ITEM_TYPE_MOMENTARY, id, text, STR_NONE, 0, parent, 0, next, addr,    \
+            MENU_TYPE_VALUE_BIT, 1, {                                              \
+            .momentary_value = NULL, .momentary_option_ids = options,              \
+            .momentary_option_count = COUNT_OF(options), .momentary_changed = NULL \
+        }                                                                          \
     }
 
 #define INFO_ITEM_WORD(id, text, parent, next, addr, dp)                                           \
