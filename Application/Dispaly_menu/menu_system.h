@@ -116,6 +116,7 @@ typedef struct MenuItem {
             int32_t min_value;               // 最小值
             int32_t max_value;               // 最大值
             int32_t step_value;              // 步进值
+            uint8_t decimal_places;          // 显示小数位，仅影响显示和步进文本
             void (*value_changed)(int32_t);  // 值改变回调
         };
 

@@ -140,6 +140,11 @@ static void render_footer_internal(void);
 static int32_t get_editable_item_value(const MenuItem* item);
 static int32_t get_render_value(const MenuItem* item, bool is_selected, bool is_editing);
 static bool is_value_editing_item(const MenuItem* item);
+static uint8_t get_value_decimal_places(const MenuItem* item);
+static void format_scaled_value(int32_t raw_value, uint8_t decimal_places, char* buffer,
+                                size_t buffer_size);
+static void format_menu_item_value(const MenuItem* item, int32_t value, char* buffer,
+                                   size_t buffer_size);
 static uint8_t get_value_step_index_by_step(int32_t step_value);
 static int32_t get_current_value_edit_step(void);
 static void switch_value_edit_step(int8_t direction);
@@ -412,7 +417,8 @@ static uint16_t get_menu_item_max_text_width(const MenuItem* item, uint8_t text_
         break;
 
     case MENU_ITEM_TYPE_VALUE:
-        max_text_width -= 48;
+    case MENU_ITEM_TYPE_INFO:
+        max_text_width -= 64;
         break;
 
     case MENU_ITEM_TYPE_LIST:
@@ -1591,6 +1597,48 @@ static bool is_value_editing_item(const MenuItem* item) {
     return (item != NULL && item->type == MENU_ITEM_TYPE_VALUE);
 }
 
+static uint8_t get_value_decimal_places(const MenuItem* item) {
+    if (!is_value_editing_item(item)) {
+        return 0U;
+    }
+
+    return item->data.decimal_places;
+}
+
+static void format_scaled_value(int32_t raw_value, uint8_t decimal_places, char* buffer,
+                                size_t buffer_size) {
+    uint32_t scale = 1U;
+    uint8_t i;
+    uint32_t abs_value;
+    uint32_t integer_part;
+    uint32_t fractional_part;
+
+    if (buffer == NULL || buffer_size == 0U) {
+        return;
+    }
+
+    if (decimal_places == 0U) {
+        snprintf(buffer, buffer_size, "%ld", (long)raw_value);
+        return;
+    }
+
+    for (i = 0U; i < decimal_places; i++) {
+        scale *= 10U;
+    }
+
+    abs_value = (raw_value < 0) ? (uint32_t)(-(int64_t)raw_value) : (uint32_t)raw_value;
+    integer_part = abs_value / scale;
+    fractional_part = abs_value % scale;
+
+    snprintf(buffer, buffer_size, (raw_value < 0) ? "-%lu.%0*lu" : "%lu.%0*lu",
+             (unsigned long)integer_part, (int)decimal_places, (unsigned long)fractional_part);
+}
+
+static void format_menu_item_value(const MenuItem* item, int32_t value, char* buffer,
+                                   size_t buffer_size) {
+    format_scaled_value(value, get_value_decimal_places(item), buffer, buffer_size);
+}
+
 static uint8_t get_value_step_index_by_step(int32_t step_value) {
     uint8_t i;
 
@@ -1860,24 +1908,30 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
         char value_str[16];
         uint8_t value_mode = (is_selected && is_editing && menu_ctx.edit_flash_inverse) ? 1 : 0;
         int32_t display_value = get_render_value(item, is_selected, is_editing);
+        uint16_t underline_width;
 
-        snprintf(value_str, sizeof(value_str), "%d", display_value);
+        format_menu_item_value(item, display_value, value_str, sizeof(value_str));
+        underline_width = menu_calculate_text_width(value_str);
+        if (underline_width < 16U) {
+            underline_width = 16U;
+        }
         // 根据行数调整位置
         if (text_layout.line_count > 1) {
-            JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos + default_layout.line_height, value_str,
+            JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos + default_layout.line_height, value_str,
                                  default_layout.font_size, value_mode);
 
             if (is_selected && is_editing) {
                 // 编辑模式下高亮显示
-                bsp_JLXLcdShowUnderline(JLXLCD_W - 48, y_pos + default_layout.line_height + 14, 32);
+                bsp_JLXLcdShowUnderline(JLXLCD_W - 64, y_pos + default_layout.line_height + 14,
+                                        underline_width);
             }
         } else {
-            JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos, value_str, default_layout.font_size,
+            JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos, value_str, default_layout.font_size,
                                  value_mode);
 
             if (is_selected && is_editing) {
                 // 编辑模式下高亮显示
-                bsp_JLXLcdShowUnderline(JLXLCD_W - 48, y_pos + 14, 32);
+                bsp_JLXLcdShowUnderline(JLXLCD_W - 64, y_pos + 14, underline_width);
             }
         }
     } break;
@@ -1917,12 +1971,12 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
     case MENU_ITEM_TYPE_INFO: {
         char value_str[16];
         int32_t display_value = get_render_value(item, is_selected, is_editing);
-        snprintf(value_str, sizeof(value_str), "%d", display_value);
+        format_menu_item_value(item, display_value, value_str, sizeof(value_str));
         if (text_layout.line_count > 1) {
-            JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos + default_layout.line_height, value_str,
+            JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos + default_layout.line_height, value_str,
                                  default_layout.font_size, 0);
         } else {
-            JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos, value_str, default_layout.font_size, 0);
+            JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos, value_str, default_layout.font_size, 0);
         }
     } break;
 
@@ -2144,15 +2198,15 @@ static void render_footer_internal(void) {
         is_value_editing = is_value_editing_item(edit_item);
 
         if (is_value_editing) {
-            char step_str[20];
-            uint16_t step_width;
-            uint16_t step_x;
+            char step_value_str[16];
+            char step_str[24];
+            MenuItem* edit_item = get_menu_item(menu_ctx.edit_item_id);
 
             JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:调整   左/右:", default_layout.font_size, 0);
 
-            snprintf(step_str, sizeof(step_str), "步长:%d", (int)get_current_value_edit_step());
-            // step_width = menu_calculate_text_width(step_str);
-            // step_x = (step_width + 2U < JLXLCD_W) ? (JLXLCD_W - step_width - 2U) : 0;
+            format_scaled_value(get_current_value_edit_step(), get_value_decimal_places(edit_item),
+                                step_value_str, sizeof(step_value_str));
+            snprintf(step_str, sizeof(step_str), "步长:%s", step_value_str);
             JLX_ShowStringAnyRow(120, y_pos + 4, step_str, default_layout.font_size, 0);
         } else {
             JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:调整", default_layout.font_size, 0);
