@@ -97,17 +97,16 @@ static StringID normally_open_close_option_ids[] = {STR_NORMALLY_OPEN, STR_NORMA
 static StringID on_off_option_ids[] = {STR_CLOSE, STR_OPEN};
 
 static const IOMonitorPoint io_monitor_x_points[] = {
-    {STR_X0, 18176U},  {STR_X1, 18177U},  {STR_X2, 18178U},  {STR_X3, 18179U},
-    {STR_X4, 18180U},  {STR_X5, 18181U},  {STR_X6, 18182U},  {STR_X7, 18183U},
-    {STR_X8, 18184U},  {STR_X9, 18185U},  {STR_X10, 18186U}, {STR_X11, 18187U},
-    {STR_X12, 18188U}, {STR_X13, 18189U}, {STR_X14, 18190U}, {STR_X15, 18191U},
+    {STR_X0, 18176U},  {STR_X1, 18177U},  {STR_X2, 18178U},  {STR_X3, 18179U},  {STR_X4, 18180U},
+    {STR_X5, 18181U},  {STR_X6, 18182U},  {STR_X7, 18183U},  {STR_X10, 18184U}, {STR_X11, 18185U},
+    {STR_X12, 18186U}, {STR_X13, 18187U}, {STR_X14, 18188U}, {STR_X15, 18189U}, {STR_X16, 18190U},
 };
 
 static const IOMonitorPoint io_monitor_y_points[] = {
     {STR_Y0, 17920U},  {STR_Y1, 17921U},  {STR_Y2, 17922U},  {STR_Y3, 17923U},
     {STR_Y4, 17924U},  {STR_Y5, 17925U},  {STR_Y6, 17926U},  {STR_Y7, 17927U},
-    {STR_Y8, 17928U},  {STR_Y9, 17929U},  {STR_Y10, 17930U}, {STR_Y11, 17931U},
-    {STR_Y12, 17932U}, {STR_Y13, 17933U}, {STR_Y14, 17934U}, {STR_Y15, 17935U},
+    {STR_Y10, 17928U}, {STR_Y11, 17929U}, {STR_Y12, 17930U}, {STR_Y13, 17931U},
+    {STR_Y14, 17932U}, {STR_Y15, 17933U}, {STR_Y16, 17934U}, {STR_Y17, 17935U},
 };
 
 static const IOMonitorConfig io_monitor_config = {
@@ -119,7 +118,7 @@ static const IOMonitorConfig io_monitor_config = {
 
 static const AlarmLogConfig alarm_log_config = {
     .menu_id = 500U,
-    .rs485_addr = 0U,  // 文档未给出报警码来源地址，这里保留占位地址，后续按实际PLC地址替换
+    .rs485_addr = 2914U,  // 文档未给出报警码来源地址，这里保留占位地址，后续按实际PLC地址替换
     .rs485_type = MENU_TYPE_VALUE_UINT16,
 };
 

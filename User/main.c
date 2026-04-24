@@ -59,7 +59,7 @@ int main(void) {
 #endif
 
     // 使能全局中断
-    __enable_irq();
+//    __disable_irq();
     // printf("系统初始化完成\r\n");  // 注释掉以节省内存
 
     // 主循环 - 时间片任务模式

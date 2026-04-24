@@ -68,10 +68,10 @@ static const uint8_t raw_key_table[6] = {RAW_KEY_F1, RAW_KEY_F2, RAW_KEY_F3,
                                          RAW_KEY_F4, RAW_KEY_F5, RAW_KEY_F6};
 
 // 按键上下文数组（每个功能键一个上下文）
-static KeyContext key_contexts[6] = {0};
+static KeyContext key_contexts[6];
 
 // 事件队列
-static EventQueue event_queue = {0};
+static EventQueue event_queue;
 
 // 功能使能标志
 static bool long_press_enabled = true;

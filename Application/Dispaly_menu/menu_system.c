@@ -38,10 +38,10 @@ static const ScreenLayout default_layout = {
 
 static const int32_t value_edit_steps[] = {1, 10, 100, 1000, 10000};
 
-#define VALUE_SHOW_WITH 36U
-#define LIST_SHOW_WITH 36U
+#define VALUE_SHOW_WITH 48U
+#define LIST_SHOW_WITH 48U
 #define TOGGLE_SHOW_WITH 36U
-#define INFO_SHOW_WITH 36U
+#define INFO_SHOW_WITH 48U
 #define MOMENTARY_SHOW_WITH 36U
 
 #define VALUE_EDIT_STEP_COUNT ((uint8_t)(sizeof(value_edit_steps) / sizeof(value_edit_steps[0])))
@@ -74,7 +74,7 @@ typedef struct {
 static const MenuItem* menu_items = NULL;
 static uint16_t menu_item_count = 0;
 static IOMonitorConfig io_monitor_config = {0};
-static AlarmLogConfig alarm_log_config = {0U, MENU_RS485_ADDR_NONE, MENU_TYPE_VALUE_UINT16};
+static AlarmLogConfig alarm_log_config = {0U, 0U, MENU_TYPE_VALUE_UINT16};
 static AlarmLogEntry alarm_log_entries[ALARM_LOG_MAX_ENTRIES] = {0};
 static uint8_t alarm_log_head = 0U;
 static uint8_t alarm_log_count = 0U;
@@ -407,7 +407,7 @@ static uint16_t get_child_index(uint16_t parent_id, uint16_t child_id) {
 
 // 计算菜单项的最大文本显示宽度
 static uint16_t get_menu_item_max_text_width(const MenuItem* item, uint8_t text_x) {
-    uint16_t max_text_width = JLXLCD_W - text_x - 16;
+    uint16_t max_text_width = JLXLCD_W - text_x;
 
     if (item == NULL) {
         return max_text_width;
@@ -1840,7 +1840,7 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
 
     // 绘制第二行文本（如果有）
     if (text_layout.line_count > 1) {
-        JLX_ShowStringAnyRow(text_x, y_pos + default_layout.line_height, text_layout.line2,
+        JLX_ShowStringAnyRow(text_x + 26, y_pos + default_layout.line_height, text_layout.line2,
                              default_layout.font_size, 0);
     }
 
@@ -1849,10 +1849,10 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
     case MENU_ITEM_TYPE_SUBMENU:
         // 子菜单箭头，根据行数调整位置
         if (text_layout.line_count > 1) {
-            JLX_ShowStringAnyRow(JLXLCD_W - 16, y_pos + default_layout.line_height, "->",
+            JLX_ShowStringAnyRow(JLXLCD_W - 30, y_pos + default_layout.line_height, "-->",
                                  default_layout.font_size, 0);
         } else {
-            JLX_ShowStringAnyRow(JLXLCD_W - 16, y_pos, "->", default_layout.font_size, 0);
+            JLX_ShowStringAnyRow(JLXLCD_W - 30, y_pos, "-->", default_layout.font_size, 0);
         }
         break;
 
@@ -1930,19 +1930,21 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
             JLX_ShowStringAnyRow(JLXLCD_W - VALUE_SHOW_WITH, y_pos + default_layout.line_height,
                                  value_str, default_layout.font_size, value_mode);
 
-            if (is_selected && is_editing) {
-                // 编辑模式下高亮显示
-                bsp_JLXLcdShowUnderline(JLXLCD_W - VALUE_SHOW_WITH,
-                                        y_pos + default_layout.line_height + 14, underline_width);
-            }
+            //            if (is_selected && is_editing) {
+            //                // 编辑模式下高亮显示
+            //                bsp_JLXLcdShowUnderline(JLXLCD_W - VALUE_SHOW_WITH,
+            //                                        y_pos + default_layout.line_height + 14,
+            //                                        underline_width);
+            //            }
         } else {
             JLX_ShowStringAnyRow(JLXLCD_W - VALUE_SHOW_WITH, y_pos, value_str,
                                  default_layout.font_size, value_mode);
 
-            if (is_selected && is_editing) {
-                // 编辑模式下高亮显示
-                bsp_JLXLcdShowUnderline(JLXLCD_W - VALUE_SHOW_WITH, y_pos + 14, underline_width);
-            }
+            //            if (is_selected && is_editing) {
+            //                // 编辑模式下高亮显示
+            //                bsp_JLXLcdShowUnderline(JLXLCD_W - VALUE_SHOW_WITH, y_pos + 14,
+            //                underline_width);
+            //            }
         }
     } break;
 
@@ -1985,10 +1987,11 @@ static void render_menu_item_internal(uint8_t y_pos, MenuItem* item, bool is_sel
         int32_t display_value = get_render_value(item, is_selected, is_editing);
         format_menu_item_value(item, display_value, value_str, sizeof(value_str));
         if (text_layout.line_count > 1) {
-            JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos + default_layout.line_height, value_str,
-                                 default_layout.font_size, 0);
+            JLX_ShowStringAnyRow(JLXLCD_W - VALUE_SHOW_WITH, y_pos + default_layout.line_height,
+                                 value_str, default_layout.font_size, 0);
         } else {
-            JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos, value_str, default_layout.font_size, 0);
+            JLX_ShowStringAnyRow(JLXLCD_W - VALUE_SHOW_WITH, y_pos, value_str,
+                                 default_layout.font_size, 0);
         }
     } break;
 
@@ -2039,7 +2042,9 @@ static void render_io_monitor_view(void) {
         }
 
         snprintf(display_text_state, sizeof(display_text_state), "%s",
-                 (point->rs485_addr == MENU_RS485_ADDR_NONE) ? "--" : (value ? "开" : "关"));
+                 (point->rs485_addr == MENU_RS485_ADDR_NONE)
+                     ? "--"
+                     : (value ? get_string(STR_SHI) : get_string(STR_KONG)));
         snprintf(display_text_id, sizeof(display_text_id), "%s", io_name);
 
         if (slot == menu_ctx.io_selected_index && slot < page_count) {
@@ -2163,16 +2168,20 @@ static void render_footer_internal(void) {
         bool output_page = io_monitor_page_is_output(menu_ctx.io_current_page);
 
         if (menu_ctx.io_is_editing) {
-            JLX_ShowStringAnyRow(2, y_pos + 4, "确认:切换   返回:取消", default_layout.font_size,
-                                 0);
+            JLX_ShowStringAnyRow(2, y_pos + 4, "F3:取消                   F6:切换",
+                                 default_layout.font_size, 0);
         } else if (output_page) {
-            JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择 确认:编辑", default_layout.font_size, 0);
+            // JLX_ShowStringAnyRow(2, y_pos + 4, "F6:编辑", default_layout.font_size, 0);
+            JLX_ShowStringAnyRow(2, y_pos + 4, "左/右:翻页", default_layout.font_size, 0);
+            JLX_ShowStringAnyRow(JLXLCD_W - menu_calculate_text_width("下/上:选择") - 2, y_pos + 4,
+                                 "下/上:选择", default_layout.font_size, 0);
         } else {
-            JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择 左/右:翻页", default_layout.font_size,
-                                 0);
+            JLX_ShowStringAnyRow(2, y_pos + 4, "左/右:翻页", default_layout.font_size, 0);
+            JLX_ShowStringAnyRow(JLXLCD_W - menu_calculate_text_width("下/上:选择") - 2, y_pos + 4,
+                                 "下/上:选择", default_layout.font_size, 0);
         }
 
-        if (menu_ctx.io_total_pages > 1U) {
+        if (menu_ctx.io_total_pages > 1U && !menu_ctx.io_is_editing) {
             render_page_info();
         }
         return;
@@ -2180,13 +2189,16 @@ static void render_footer_internal(void) {
 
     if (menu_ctx.special_view == MENU_SPECIAL_VIEW_ALARM_LOG) {
         if (alarm_log_count == 0U) {
-            JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择 左/右:翻页", default_layout.font_size,
-                                 0);
+            JLX_ShowStringAnyRow(2, y_pos + 4, "左/右:翻页", default_layout.font_size, 0);
+            JLX_ShowStringAnyRow(JLXLCD_W - menu_calculate_text_width("下/上:选择") - 2, y_pos + 4,
+                                 "下/上:选择", default_layout.font_size, 0);
         } else if (alarm_log_selected_row == 0U) {
-            JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择 左/右:翻页", default_layout.font_size,
-                                 0);
+            JLX_ShowStringAnyRow(2, y_pos + 4, "左/右:翻页", default_layout.font_size, 0);
+            JLX_ShowStringAnyRow(JLXLCD_W - menu_calculate_text_width("下/上:选择") - 2, y_pos + 4,
+                                 "下/上:选择", default_layout.font_size, 0);
         } else {
-            JLX_ShowStringAnyRow(2, y_pos + 4, "确认:已读 左/右:翻页", default_layout.font_size, 0);
+            JLX_ShowStringAnyRow(2, y_pos + 4, "左/右:翻页            F6:已读",
+                                 default_layout.font_size, 0);
         }
 
         if (alarm_log_total_pages > 1U) {
@@ -2214,19 +2226,23 @@ static void render_footer_internal(void) {
             char step_str[24];
             MenuItem* edit_item = get_menu_item(menu_ctx.edit_item_id);
 
-            JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:调整   左/右:", default_layout.font_size, 0);
+            JLX_ShowStringAnyRow(2, y_pos + 4, "左/右:", default_layout.font_size, 0);
 
             format_scaled_value(get_current_value_edit_step(), get_value_decimal_places(edit_item),
                                 step_value_str, sizeof(step_value_str));
             snprintf(step_str, sizeof(step_str), "步长:%s", step_value_str);
-            JLX_ShowStringAnyRow(120, y_pos + 4, step_str, default_layout.font_size, 0);
+            JLX_ShowStringAnyRow(40, y_pos + 4, step_str, default_layout.font_size, 0);
+            JLX_ShowStringAnyRow(JLXLCD_W - menu_calculate_text_width("下/上:选择") - 2, y_pos + 4,
+                                 "下/上:选择", default_layout.font_size, 0);
         } else {
             JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:调整", default_layout.font_size, 0);
         }
         // JLX_ShowStringAnyRow(JLXLCD_W - 64, y_pos + 4, "确认:√ 取消:X", default_layout.font_size,
         //                      0);
     } else {
-        JLX_ShowStringAnyRow(2, y_pos + 4, "上/下:选择   左/右:翻页", default_layout.font_size, 0);
+        JLX_ShowStringAnyRow(2, y_pos + 4, "左/右:翻页", default_layout.font_size, 0);
+        JLX_ShowStringAnyRow(JLXLCD_W - menu_calculate_text_width("下/上:选择") - 2, y_pos + 4,
+                             "下/上:选择", default_layout.font_size, 0);
         // JLX_ShowStringAnyRow(JLXLCD_W - 48, y_pos + 4, "确认:→ 返回:←", default_layout.font_size,
         //                      0);
     }
@@ -2479,7 +2495,8 @@ static void handle_edit_increase(void) {
 
     case MENU_ITEM_TYPE_LIST:
         if (item->data.option_count > 0) {
-            uint8_t new_selection = (uint8_t)menu_ctx.edit_pending_value + 1;
+            uint8_t new_selection =
+                ((uint8_t)menu_ctx.edit_pending_value + 1) % item->data.option_count;
             if (new_selection < item->data.option_count) {
                 menu_ctx.edit_pending_value = new_selection;
                 menu_ctx.need_redraw = true;
@@ -2522,6 +2539,10 @@ static void handle_edit_decrease(void) {
             uint8_t current_selection = (uint8_t)menu_ctx.edit_pending_value;
             if (current_selection > 0) {
                 uint8_t new_selection = current_selection - 1;
+                menu_ctx.edit_pending_value = new_selection;
+                menu_ctx.need_redraw = true;
+            } else if (current_selection == 0) {
+                uint8_t new_selection = item->data.option_count - 1;
                 menu_ctx.edit_pending_value = new_selection;
                 menu_ctx.need_redraw = true;
             }
@@ -3208,7 +3229,7 @@ static void render_page_info(void) {
         snprintf(page_str, sizeof(page_str), "(%d/%d)", current_page, total_pages);
 
         page_width = menu_calculate_text_width(page_str);
-        x_pos = (page_width + 2 < JLXLCD_W) ? (JLXLCD_W - page_width - 2) : 0;
+        x_pos = (page_width + 2 < JLXLCD_W) ? (78) : 0;
 
         // 在底部状态栏右侧显示页码
         JLX_ShowStringAnyRow(x_pos, y_pos + 4, page_str, default_layout.font_size, 0);

@@ -66,7 +66,7 @@ typedef struct {
 /**
  * @brief 初始化Modbus控制器
  */
-// void MBController_Init(void);
+void MBController_Init(void);
 
 /**
  * @brief 处理队列中的Modbus请求
