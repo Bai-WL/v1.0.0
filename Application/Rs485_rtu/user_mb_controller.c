@@ -1,4 +1,4 @@
-﻿#include "user_mb_controller.h"
+#include "user_mb_controller.h"
 
 #include "device_storage.h"
 
@@ -213,12 +213,12 @@ void MBController_Process(BSP_ModbusHandleTypedef* _hModbus) {
 
                         for (uint16_t i = 0; i < current_req.data_len; i++) {
                             // 计算字节和位索引
-                            byte_index = i / 8;
-                            bit_index = i % 8;
+                            byte_index = i / 16;
+                            bit_index = i % 16;
 
                             if (byte_index < rx_data_len) {
                                 // 提取位值
-                                uint8_t byte_value = (uint8_t)(rx_buffer[byte_index] & 0xFF);
+                                uint16_t byte_value = (uint16_t)(rx_buffer[byte_index] & 0xFFFF);
                                 uint16_t coil_value = (byte_value >> bit_index) & 0x01;
 
                                 // 更新缓存

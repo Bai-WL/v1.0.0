@@ -148,7 +148,7 @@ static const char* cn_strings[] = {
     [STR_SETTING_P15] = "P15 插拔料位置",
     [STR_SETTING_P16] = "P16 插料推力",
     [STR_SETTING_P17] = "P17 拔料推力",
-    [STR_SETTING_P17] = "P18 油泵频率",
+    [STR_SETTING_P18] = "P18 油泵频率",
 
     // 系统参数菜单
     [STR_M00] = "M00 模拟模式",
